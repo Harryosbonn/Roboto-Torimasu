@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Robot Beacon</title>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Inter:wght@300;500;700&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #0a0b10;
+            --card-bg: #161a23;
+            --accent-blue: #00d2ff;
+            --accent-green: #00ff88;
+            --accent-red: #ff3366;
+            --accent-orange: #ff9500;
+            --text-main: #e0e6ed;
+            --text-dim: #94a3b8;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background: var(--bg-dark);
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 400px;
+            width: 100%;
+            text-align: center;
+        }
+
+        h1 {
+            font-family: 'Orbitron', sans-serif;
+            color: var(--accent-blue);
+            text-shadow: 0 0 20px rgba(0, 210, 255, 0.5);
+            margin-bottom: 10px;
+            font-size: 1.8rem;
+        }
+
+        .subtitle {
+            color: var(--text-dim);
+            margin-bottom: 30px;
+        }
+
+        .beacon-ring {
+            width: 200px;
+            height: 200px;
+            border-radius: 50%;
+            margin: 0 auto 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+
+        .beacon-ring::before {
+            content: '';
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            border: 3px solid var(--accent-blue);
+            animation: pulse 2s infinite;
+        }
+
+        .beacon-ring.active::before {
+            border-color: var(--accent-green);
+        }
+
+        .beacon-ring.error::before {
+            border-color: var(--accent-red);
+            animation: none;
+        }
+
+        @keyframes pulse {
+            0% {
+                transform: scale(1);
+                opacity: 1;
+            }
+
+            100% {
+                transform: scale(1.5);
+                opacity: 0;
+            }
+        }
+
+        .beacon-icon {
+            font-size: 4rem;
+        }
+
+        .status-text {
+            font-size: 1.2rem;
+            font-weight: 500;
+            margin-bottom: 20px;
+        }
+
+        .status-text.active {
+            color: var(--accent-green);
+        }
+
+        .status-text.waiting {
+            color: var(--accent-orange);
+        }
+
+        .status-text.error {
+            color: var(--accent-red);
+        }
+
+        .coords {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 15px;
+            margin-bottom: 20px;
+            font-family: monospace;
+            font-size: 1rem;
+        }
+
+        .coord-row {
+            display: flex;
+            justify-content: space-between;
+            margin: 5px 0;
+        }
+
+        .coord-label {
+            color: var(--text-dim);
+        }
+
+        .coord-value {
+            color: var(--accent-blue);
+        }
+
+        .btn {
+            width: 100%;
+            padding: 18px;
+            border: none;
+            border-radius: 12px;
+            font-family: 'Orbitron', sans-serif;
+            font-weight: bold;
+            font-size: 1.1rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-start {
+            background: linear-gradient(135deg, var(--accent-green), #00cc6f);
+            color: #000;
+        }
+
+        .btn-stop {
+            background: var(--accent-red);
+            color: white;
+        }
+
+        .btn:active {
+            transform: scale(0.98);
+        }
+
+        .info {
+            margin-top: 20px;
+            font-size: 0.8rem;
+            color: var(--text-dim);
+        }
+
+        .accuracy-bar {
+            height: 4px;
+            background: var(--card-bg);
+            border-radius: 2px;
+            margin-top: 10px;
+            overflow: hidden;
+        }
+
+        .accuracy-fill {
+            height: 100%;
+            background: var(--accent-green);
+            transition: width 0.3s;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>📡 BEACON MODE</h1>
+        <p class="subtitle">Your phone is the target</p>
+
+        <div class="beacon-ring" id="beaconRing">
+            <span class="beacon-icon">📍</span>
+        </div>
+
+        <p class="status-text waiting" id="statusText">Tap START to begin tracking</p>
+
+        <div class="coords" id="coordsPanel" style="display: none;">
+            <div class="coord-row">
+                <span class="coord-label">Latitude</span>
+                <span class="coord-value" id="lat">--</span>
+            </div>
+            <div class="coord-row">
+                <span class="coord-label">Longitude</span>
+                <span class="coord-value" id="lon">--</span>
+            </div>
+            <div class="coord-row">
+                <span class="coord-label">Accuracy</span>
+                <span class="coord-value" id="accuracy">--</span>
+            </div>
+            <div class="coord-row">
+                <span class="coord-label">RSSI (Signal)</span>
+                <span class="coord-value" id="rssi">--</span>
+            </div>
+            <div class="coord-row">
+                <span class="coord-label">Updates</span>
+                <span class="coord-value" id="updates">0</span>
+            </div>
+            <div class="accuracy-bar">
+                <div class="accuracy-fill" id="accuracyBar" style="width: 0%"></div>
+            </div>
+        </div>
+
+        <!-- Radar Visualization -->
+        <div id="radarPanel" style="display: none; margin-bottom: 20px;">
+            <canvas id="radarCanvas" width="300" height="300"
+                style="border-radius: 50%; background: radial-gradient(circle, #0a1520 0%, #060810 100%);"></canvas>
+            <div style="text-align: center; margin-top: 10px; color: var(--text-dim); font-size: 0.8rem;">
+                Est. Distance: <span id="estDistance" style="color: var(--accent-green);">--</span> m
+            </div>
+        </div>
+
+        <button class="btn btn-start" id="startBtn" onclick="startBeacon()">START BEACON</button>
+        <button class="btn btn-stop" id="stopBtn" onclick="stopBeacon()" style="display: none;">STOP BEACON</button>
+
+        <p class="info">Keep this page open while the robot follows you.<br>Works best outdoors with clear sky.</p>
+    </div>
+
+    <script>
+        let watchId = null;
+        let updateCount = 0;
+        const ROBOT_API = '/api/beacon';  // Relative to current host
+
+        function startBeacon() {
+            if (!navigator.geolocation) {
+                showError("Geolocation not supported");
+                return;
+            }
+
+            document.getElementById('startBtn').style.display = 'none';
+            document.getElementById('stopBtn').style.display = 'block';
+            document.getElementById('coordsPanel').style.display = 'block';
+            document.getElementById('radarPanel').style.display = 'block';
+            document.getElementById('statusText').textContent = 'Acquiring GPS...';
+            document.getElementById('statusText').className = 'status-text waiting';
+
+            watchId = navigator.geolocation.watchPosition(
+                onPosition,
+                onError,
+                {
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                    maximumAge: 0
+                }
+            );
+        }
+
+        function stopBeacon() {
+            if (watchId !== null) {
+                navigator.geolocation.clearWatch(watchId);
+                watchId = null;
+            }
+
+            document.getElementById('startBtn').style.display = 'block';
+            document.getElementById('stopBtn').style.display = 'none';
+            document.getElementById('statusText').textContent = 'Beacon stopped';
+            document.getElementById('statusText').className = 'status-text waiting';
+            document.getElementById('beaconRing').className = 'beacon-ring';
+        }
+
+        function onPosition(pos) {
+            updateCount++;
+            const lat = pos.coords.latitude;
+            const lon = pos.coords.longitude;
+            const acc = pos.coords.accuracy;
+
+            // Update UI
+            document.getElementById('lat').textContent = lat.toFixed(6);
+            document.getElementById('lon').textContent = lon.toFixed(6);
+            document.getElementById('accuracy').textContent = acc.toFixed(1) + 'm';
+            document.getElementById('updates').textContent = updateCount;
+
+            // Accuracy bar (100% at 5m or less)
+            const accPercent = Math.max(0, Math.min(100, (1 - acc / 50) * 100));
+            document.getElementById('accuracyBar').style.width = accPercent + '%';
+
+            document.getElementById('statusText').textContent = 'Broadcasting...';
+            document.getElementById('statusText').className = 'status-text active';
+            document.getElementById('beaconRing').className = 'beacon-ring active';
+
+            // Send to robot and update radar
+            updatePhonePos(lat, lon);
+            sendToRobot(lat, lon, acc);
+        }
+
+        function onError(err) {
+            showError(err.message);
+        }
+
+        function showError(msg) {
+            document.getElementById('statusText').textContent = 'Error: ' + msg;
+            document.getElementById('statusText').className = 'status-text error';
+            document.getElementById('beaconRing').className = 'beacon-ring error';
+        }
+
+        async function sendToRobot(lat, lon, accuracy) {
+            try {
+                const res = await fetch(ROBOT_API, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        type: 'beacon',
+                        lat: lat,
+                        lon: lon,
+                        accuracy: accuracy,
+                        valid: true
+                    })
+                });
+                const responseData = await res.json();
+                if (responseData.rssi !== undefined) {
+                    document.getElementById('rssi').textContent = responseData.rssi + ' dBm';
+                    drawRadar(responseData.rssi);
+                }
+            } catch (e) {
+                console.error('Send failed:', e);
+            }
+        }
+
+        // Radar Drawing
+        const radarCanvas = document.getElementById('radarCanvas');
+        const radarCtx = radarCanvas.getContext('2d');
+        let radarAngle = 0;
+        let trackingTarget = { bearing: 0, distance: 0, source: 'NONE' };
+
+        // Fetch telemetry (including fused target) periodically
+        async function fetchTelemetry() {
+            try {
+                const res = await fetch('/api/telemetry');
+                const data = await res.json();
+                if (data.tracking_target) {
+                    trackingTarget = data.tracking_target;
+                    drawRadar();
+                }
+            } catch (e) { }
+        }
+        setInterval(fetchTelemetry, 250); // Fast update for smooth radar
+
+        function drawRadar() {
+            const canvas = radarCanvas;
+            const ctx = radarCtx;
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            const maxRadius = canvas.width / 2 - 10;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw range rings
+            const ranges = [1, 3, 5, 10];
+            ctx.strokeStyle = '#1e3a5f';
+            ctx.lineWidth = 1;
+            ranges.forEach(range => {
+                const r = (range / 10) * maxRadius;
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, r, 0, 2 * Math.PI);
+                ctx.stroke();
+                ctx.fillStyle = '#4a6fa5';
+                ctx.font = '10px Inter';
+                ctx.fillText(range + 'm', centerX + r - 15, centerY - 3);
+            });
+
+            // Draw cross lines
+            ctx.beginPath();
+            ctx.moveTo(centerX, 10);
+            ctx.lineTo(centerX, canvas.height - 10);
+            ctx.moveTo(10, centerY);
+            ctx.lineTo(canvas.width - 10, centerY);
+            ctx.stroke();
+
+            // Draw sweeping line
+            radarAngle = (radarAngle + 5) % 360;
+            const sweepRad = radarAngle * Math.PI / 180;
+            ctx.beginPath();
+            ctx.moveTo(centerX, centerY);
+            ctx.lineTo(centerX + Math.cos(sweepRad) * maxRadius, centerY + Math.sin(sweepRad) * maxRadius);
+            ctx.strokeStyle = 'rgba(0, 255, 136, 0.5)';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // Draw Target Blip
+            // target.bearing is Relative to Robot Front (0 deg = Up)
+            // target.distance is in meters
+            const dist = trackingTarget.distance || 0;
+            const source = trackingTarget.source || 'NONE';
+
+            if (source !== 'NONE' && dist > 0) {
+                const blipRadius = Math.min(dist / 10, 1) * maxRadius;
+                // Convert bearing to canvas angle (0 deg is Up -> -90 deg in canvas radians)
+                const bearingRad = (trackingTarget.bearing - 90) * Math.PI / 180;
+
+                let blipX = centerX + Math.cos(bearingRad) * blipRadius;
+                let blipY = centerY + Math.sin(bearingRad) * blipRadius;
+
+                // If signal is RSSI only (no direction), draw a ring instead of a dot?
+                // Or just draw at top (0 deg) as fallback?
+                // We'll draw at 0 deg if bearing is 0. 
+
+                // Pulsing effect
+                const pulse = Math.sin(Date.now() / 200) * 0.3 + 0.7;
+
+                // Outer glow
+                ctx.beginPath();
+                ctx.arc(blipX, blipY, 15 * pulse, 0, 2 * Math.PI);
+                ctx.fillStyle = source === 'GPS' ? 'rgba(0, 200, 255, 0.3)' : 'rgba(0, 255, 136, 0.3)';
+                ctx.fill();
+
+                // Inner blip
+                ctx.beginPath();
+                ctx.arc(blipX, blipY, 6, 0, 2 * Math.PI);
+                ctx.fillStyle = source === 'GPS' ? '#00c8ff' : '#00ff88';
+                ctx.fill();
+
+                // Label
+                ctx.fillStyle = '#fff';
+                ctx.font = '10px Inter';
+                ctx.textAlign = 'center';
+                ctx.fillText(`${dist.toFixed(1)}m (${source})`, blipX, blipY - 12);
+            }
+
+            // Update simple text display
+            document.getElementById('estDistance').textContent = dist > 0 ? dist.toFixed(1) : '--';
+
+            // Draw center (robot)
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, 8, 0, 2 * Math.PI);
+            ctx.fillStyle = '#00d2ff';
+            ctx.fill();
+            ctx.textAlign = 'center';
+            ctx.fillText('🤖', centerX, centerY + 3);
+        }
+
+        // Store phone position when we get it
+        function updatePhonePos(lat, lon) {
+            // This function is no longer needed as target data comes from server
+            // Keeping it as a placeholder or for potential future use if client-side calculation is re-introduced.
+        }
+    </script>
+</body>
+
+</html>

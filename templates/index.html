@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Antigravity Robot Dashboard</title>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Inter:wght@300;500;700&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #0a0b10;
+            --card-bg: #161a23;
+            --accent-blue: #00d2ff;
+            --accent-green: #00ff88;
+            --accent-red: #ff3366;
+            --text-main: #e0e6ed;
+            --text-dim: #94a3b8;
+        }
+
+        body {
+            background: var(--bg-dark);
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        h1 {
+            font-family: 'Orbitron', sans-serif;
+            color: var(--accent-blue);
+            text-shadow: 0 0 10px rgba(0, 210, 255, 0.5);
+            margin-bottom: 30px;
+        }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            width: 100%;
+            max-width: 1200px;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            padding: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            transition: transform 0.2s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            border-color: rgba(0, 210, 255, 0.2);
+        }
+
+        .card-title {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-dim);
+            margin-bottom: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .value-large {
+            font-size: 2.5rem;
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 700;
+        }
+
+        .unit {
+            font-size: 1rem;
+            color: var(--text-dim);
+            margin-left: 5px;
+        }
+
+        .status-pill {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.7rem;
+            font-weight: bold;
+        }
+
+        .status-ok {
+            background: rgba(0, 255, 136, 0.1);
+            color: var(--accent-green);
+        }
+
+        .status-warn {
+            background: rgba(255, 51, 102, 0.1);
+            color: var(--accent-red);
+        }
+
+        /* Controls */
+        .control-group {
+            margin-top: 15px;
+        }
+
+        label {
+            display: block;
+            font-size: 0.9rem;
+            margin-bottom: 10px;
+            color: var(--text-dim);
+        }
+
+        input[type="range"] {
+            width: 100%;
+            height: 8px;
+            border-radius: 5px;
+            background: #1e293b;
+            outline: none;
+            -webkit-appearance: none;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: var(--accent-blue);
+            cursor: pointer;
+            box-shadow: 0 0 10px rgba(0, 210, 255, 0.8);
+        }
+
+        .btn-stop {
+            width: 100%;
+            padding: 15px;
+            margin-top: 20px;
+            background: var(--accent-red);
+            border: none;
+            border-radius: 12px;
+            color: white;
+            font-family: 'Orbitron', sans-serif;
+            font-weight: bold;
+            font-size: 1.2rem;
+            cursor: pointer;
+            transition: filter 0.2s;
+        }
+
+        .btn-stop:active {
+            filter: brightness(0.8);
+        }
+
+        .gps-coords {
+            font-size: 1.1rem;
+            font-family: monospace;
+            color: var(--accent-blue);
+        }
+
+        #lidar-map {
+            width: 100%;
+            height: 200px;
+            background: #000;
+            border-radius: 8px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .alert-active {
+            color: var(--accent-red);
+            animation: blink 1s infinite;
+        }
+
+        @keyframes blink {
+            50% {
+                opacity: 0.3;
+            }
+        }
+
+        /* Tabs */
+        .tab-nav {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 25px;
+            justify-content: center;
+        }
+
+        .tab-btn {
+            background: rgba(22, 26, 35, 0.8);
+            color: var(--text-dim);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 12px 30px;
+            border-radius: 12px;
+            cursor: pointer;
+            font-family: 'Orbitron';
+            font-size: 1rem;
+            transition: all 0.2s;
+        }
+
+        .tab-btn:hover {
+            border-color: var(--accent-blue);
+            color: var(--text-main);
+        }
+
+        .tab-btn.active {
+            background: var(--accent-blue);
+            color: #000;
+            font-weight: bold;
+            box-shadow: 0 0 15px rgba(0, 210, 255, 0.4);
+            border-color: var(--accent-blue);
+        }
+
+        .tab-content {
+            display: none;
+            width: 100%;
+            max-width: 1200px;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Manual Controls */
+        .d-pad-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 30px 0;
+            gap: 40px;
+        }
+
+        .d-pad {
+            display: grid;
+            grid-template-areas:
+                ". up ."
+                "left stop right"
+                ". down .";
+            gap: 10px;
+        }
+
+        .d-btn {
+            padding: 20px;
+            background: #1e293b;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            color: white;
+            font-size: 1.5rem;
+            cursor: pointer;
+            touch-action: manipulation;
+            width: 80px;
+            height: 80px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: background 0.1s;
+        }
+
+        .d-btn:active,
+        .d-btn.pressed {
+            background: var(--accent-blue);
+            color: #000;
+            transform: scale(0.95);
+        }
+
+        .speed-control {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-bottom: 20px;
+        }
+
+        .speed-btn {
+            flex: 1;
+            padding: 10px;
+            background: var(--card-bg);
+            border: 1px solid var(--text-dim);
+            color: var(--text-dim);
+            border-radius: 8px;
+            cursor: pointer;
+            font-family: 'Orbitron';
+        }
+
+        .speed-btn.active {
+            background: var(--accent-green);
+            color: #000;
+            border-color: var(--accent-green);
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>ANTIGRAVITY V1.0</h1>
+
+    <!-- Tab Navigation -->
+    <div class="tab-nav">
+        <button class="tab-btn active" onclick="switchTab('dashboard')">DASHBOARD</button>
+        <button class="tab-btn" onclick="switchTab('manual')">MANUAL CONTROL</button>
+    </div>
+
+    <!-- TAB: DASHBOARD -->
+    <div id="tab-dashboard" class="tab-content active">
+        <div class="dashboard-grid">
+            <!-- Motion Card -->
+            <div class="card">
+                <div class="card-title">Attitude / Motion <span id="tilt-status"
+                        class="status-pill status-ok">LEVEL</span>
+                </div>
+                <div>
+                    <span class="value-large" id="pitch">0</span><span class="unit">° P</span>
+                    <span class="value-large" id="roll" style="margin-left: 20px;">0</span><span class="unit">° R</span>
+                </div>
+            </div>
+
+            <!-- Sensors Card -->
+            <div class="card">
+                <div class="card-title">Obstacles <span id="block-status" class="status-pill status-ok">CLEAR</span>
+                </div>
+                <div style="display: flex; justify-content: space-between;">
+                    <div>
+                        <label>Ultrasonic</label>
+                        <span class="value-large" id="dist-ultra">---</span><span class="unit">cm</span>
+                    </div>
+                    <div>
+                        <label>Lidar (Min)</label>
+                        <span class="value-large" id="dist-lidar">---</span><span class="unit">cm</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- GPS Card -->
+            <div class="card">
+                <div class="card-title">Robot GPS (Neo-6m) <span id="fix-status" class="status-pill status-warn">NO
+                        FIX</span></div>
+                <div class="gps-coords" id="gps-val">WAITING FOR SATELLITES...</div>
+                <div
+                    style="margin-top: 10px; font-size: 0.8rem; color: var(--text-dim); display: flex; justify-content: space-between; align-items: center;">
+                    <div>Sats: <span id="gps-sats">0</span> | Quality: <span id="gps-fix">0</span></div>
+                    <button onclick="zeroRobotGps()"
+                        style="background: var(--accent-blue); color: #000; border: none; padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; cursor: pointer; font-weight: bold; transition: opacity 0.2s;"
+                        onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">ZERO TO PHONE</button>
+                </div>
+            </div>
+
+            <!-- Phone Beacon Card -->
+            <div class="card">
+                <div class="card-title">📱 Phone Beacon <span id="beacon-status"
+                        class="status-pill status-warn">OFFLINE</span></div>
+                <div class="gps-coords" id="beacon-val">NO BEACON DATA</div>
+                <div style="margin-top: 10px; font-size: 0.8rem; color: var(--text-dim);">
+                    RSSI: <span id="beacon-rssi">--</span> dBm | Acc: <span id="beacon-acc">--</span>m | Age: <span
+                        id="beacon-age">--</span>s
+                </div>
+            </div>
+
+            <!-- Auto-Follow Navigation Card -->
+            <div class="card" id="nav-card">
+                <div class="card-title">🤖 Auto-Follow <span id="nav-status-pill"
+                        class="status-pill status-warn">OFF</span>
+                </div>
+                <div style="font-size: 1.2rem; margin: 10px 0; color: var(--accent-blue);">
+                    Mode: <span id="nav-mode-display">---</span>
+                </div>
+
+                <!-- Video Feed -->
+                <div
+                    style="text-align: center; margin-bottom: 15px; background: #000; border-radius: 8px; overflow: hidden;">
+                    <img src="/video_feed" style="width: 100%; height: auto; display: block;" alt="Camera Feed">
+                    <div style="font-size: 0.7rem; color: var(--text-dim); padding: 5px;">VISION SENSOR</div>
+                </div>
+                <button class="btn btn-start" id="navStartBtn" onclick="toggleNav(true)">START FOLLOWING</button>
+                <button class="btn btn-stop" id="navStopBtn" onclick="toggleNav(false)" style="display: none;">STOP
+                    FOLLOWING</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- TAB: MANUAL -->
+    <div id="tab-manual" class="tab-content">
+        <div class="card" style="max-width: 600px; margin: 0 auto; text-align: center;">
+            <div class="card-title" style="justify-content: center;">MANUAL OVERRIDE SYSTEM</div>
+
+            <div style="margin: 20px 0; color: var(--text-dim);">
+                <span id="manual-status" class="status-pill status-ok">READY</span>
+            </div>
+
+            <!-- PWM/DEBUG SLIDERS (REQUIRED BY JS) -->
+            <div style="display: none;">
+                <input type="range" id="steer-slider" min="50" max="130" value="90">
+                <input type="range" id="throttle-slider" min="1000" max="2000" value="1500">
+            </div>
+
+            <div style="display: flex; justify-content: space-around; margin-bottom: 20px;">
+                <div>
+                    <label>Steer</label>
+                    <span id="steer-val">90</span>
+                </div>
+                <div>
+                    <label>Throttle</label>
+                    <span id="throttle-val">0</span>% <span id="speed-dir">STOP</span>
+                </div>
+            </div>
+
+            <!-- Speed Control -->
+            <label>SPEED LIMIT</label>
+            <div class="speed-control">
+                <button class="speed-btn active" onclick="setSpeedLimit('slow')">SLOW (25%)</button>
+                <button class="speed-btn" onclick="setSpeedLimit('med')">MED (50%)</button>
+                <button class="speed-btn" onclick="setSpeedLimit('fast')">FAST (100%)</button>
+            </div>
+
+            <!-- D-Pad -->
+            <div class="d-pad-container">
+                <div class="d-pad">
+                    <button class="d-btn" style="grid-area: up;" id="btn-up">▲</button>
+                    <button class="d-btn" style="grid-area: left;" id="btn-left">◀</button>
+                    <button class="d-btn" style="grid-area: stop;" id="btn-stop"
+                        style="background: var(--accent-red);">STOP</button>
+                    <button class="d-btn" style="grid-area: right;" id="btn-right">▶</button>
+                    <button class="d-btn" style="grid-area: down;" id="btn-down">▼</button>
+                </div>
+            </div>
+
+            <div style="font-size: 0.9rem; color: var(--text-dim); margin-bottom: 20px;">
+                Use <b>W A S D</b> keys to drive<br>
+                <b>SPACE</b> to Emergency Stop
+            </div>
+
+            <button class="btn-stop" onclick="emergencyStop()">EMERGENCY STOP (SPACE)</button>
+        </div>
+    </div>
+
+    <!-- Lidar Visualizer Card -->
+    <div class="card" style="grid-column: span 2;">
+        <div class="card-title">Lidar Visualizer <span id="lidar-status" class="status-pill status-ok">SCANNING</span>
+        </div>
+        <canvas id="lidar-canvas" style="width: 100%; height: 400px; background: #000; border-radius: 12px;"></canvas>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('lidar-canvas');
+        const ctx = canvas.getContext('2d');
+
+        function resizeCanvas() {
+            canvas.width = canvas.clientWidth;
+            canvas.height = canvas.clientHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        function drawLidar(scan) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            const scale = Math.min(canvas.width, canvas.height) / 8000; // 4m radius
+
+            // Draw grid
+            ctx.strokeStyle = '#1e293b';
+            for (let r = 500; r <= 4000; r += 500) {
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, r * scale, 0, 2 * Math.PI);
+                ctx.stroke();
+            }
+
+            // Draw Robot (center)
+            ctx.fillStyle = varColor('--accent-blue');
+            ctx.fillRect(centerX - 5, centerY - 8, 10, 16);
+
+            // Draw Scan Points
+            ctx.fillStyle = varColor('--accent-blue');
+            scan.forEach(([angle, dist]) => {
+                if (dist > 0) {
+                    const rad = (angle - 90) * (Math.PI / 180);
+                    const x = centerX + Math.cos(rad) * dist * scale;
+                    const y = centerY + Math.sin(rad) * dist * scale;
+                    ctx.beginPath();
+                    ctx.arc(x, y, 1.5, 0, 2 * Math.PI);
+                    ctx.fill();
+                }
+            });
+        }
+
+        let latestBeaconData = null;
+        let robotHome = null;
+
+        function zeroRobotGps() {
+            if (latestBeaconData) {
+                robotHome = { lat: latestBeaconData.lat, lon: latestBeaconData.lon };
+                const btn = document.querySelector('button[onclick="zeroRobotGps()"]');
+                const originalText = btn.innerText;
+                btn.innerText = "ZEROED!";
+                btn.style.background = "var(--accent-green)";
+                setTimeout(() => {
+                    btn.innerText = originalText;
+                    btn.style.background = "var(--accent-blue)";
+                }, 2000);
+                console.log("Robot 'Home' set to Beacon's location:", robotHome);
+            } else {
+                alert("No beacon data received yet. Start your phone beacon first!");
+            }
+        }
+
+        // Draw Fused Tracking Target on Lidar Canvas
+        function drawTrackingTarget(target) {
+            if (!target || !target.source || target.source === "NONE") return;
+
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            // Scale: 4m radius (same as drawLidar)
+            const scale = Math.min(canvas.width, canvas.height) / 8000;
+
+            const distMm = Math.min(target.distance * 1000, 4000); // Cap at 4m for display
+
+            // Bearing 0 = Up (-90 deg in canvas)
+            const rad = (target.bearing - 90) * (Math.PI / 180);
+            const x = centerX + Math.cos(rad) * distMm * scale;
+            const y = centerY + Math.sin(rad) * distMm * scale;
+
+            // Color based on Source
+            let color = '#00e5ff'; // GPS (Cyan)
+            if (target.source === "LIDAR") color = '#00ff00'; // Green
+            if (target.source === "RSSI") color = '#ff9500'; // Orange
+            if (target.source === "VISION") color = '#aaff00'; // Lime (Vision only)
+            if (target.source === "VISION+LIDAR") color = '#ff00ff'; // Magenta (FUSION!)
+
+            // Draw blip
+            ctx.beginPath();
+            ctx.arc(x, y, 12, 0, 2 * Math.PI);
+            ctx.fillStyle = color;
+            ctx.globalAlpha = 0.3;
+            ctx.fill();
+            ctx.globalAlpha = 1.0;
+
+            ctx.beginPath();
+            ctx.arc(x, y, 6, 0, 2 * Math.PI);
+            ctx.fillStyle = color;
+            ctx.fill();
+
+            // Draw line
+            ctx.beginPath();
+            ctx.moveTo(centerX, centerY);
+            ctx.lineTo(x, y);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1;
+            ctx.stroke();
+
+            // Label
+            ctx.fillStyle = '#fff';
+            ctx.font = '10px monospace';
+            ctx.fillText(`${target.source} ${target.distance.toFixed(1)}m`, x + 10, y);
+        }
+
+        // Haversine formula for distance
+        function haversine(lat1, lon1, lat2, lon2) {
+            const R = 6371000; // Earth radius in meters
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return R * c;
+        }
+
+        // Calculate bearing from point 1 to point 2
+        function calculateBearing(lat1, lon1, lat2, lon2) {
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const y = Math.sin(dLon) * Math.cos(lat2 * Math.PI / 180);
+            const x = Math.cos(lat1 * Math.PI / 180) * Math.sin(lat2 * Math.PI / 180) -
+                Math.sin(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.cos(dLon);
+            return Math.atan2(y, x) * 180 / Math.PI;
+        }
+
+        function varColor(name) {
+            return getComputedStyle(document.body).getPropertyValue(name);
+        }
+
+        const steerSlider = document.getElementById('steer-slider');
+        const throttleSlider = document.getElementById('throttle-slider');
+        const steerVal = document.getElementById('steer-val');
+        const throttleVal = document.getElementById('throttle-val');
+
+        async function toggleNav(start) {
+            const endpoint = start ? '/api/nav/start' : '/api/nav/stop';
+            try {
+                await fetch(endpoint, { method: 'POST' });
+                // Note: UI updates via telemetry loop
+            } catch (e) {
+                console.error("Navigation control failed", e);
+            }
+        }
+
+        function updateControls() {
+            steerVal.innerText = steerSlider.value;
+
+            // Convert PWM to speed percentage (-100 to +100)
+            const pwm = parseInt(throttleSlider.value);
+            const speed = Math.round((pwm - 1500) / 2); // 1300-1700 -> -100 to +100
+            throttleVal.innerText = Math.abs(speed);
+
+            const dirLabel = document.getElementById('speed-dir');
+            if (speed > 5) {
+                dirLabel.innerText = "(FWD)";
+                dirLabel.style.color = "var(--accent-green)";
+            } else if (speed < -5) {
+                dirLabel.innerText = "(REV)";
+                dirLabel.style.color = "var(--accent-red)";
+            } else {
+                dirLabel.innerText = "(STOPPED)";
+                dirLabel.style.color = "var(--accent-blue)";
+            }
+
+            fetch('/api/control', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    steer: parseInt(steerSlider.value),
+                    throttle: pwm
+                })
+            });
+        }
+
+        steerSlider.oninput = updateControls;
+        throttleSlider.oninput = updateControls;
+        throttleSlider.onmouseup = () => {
+            throttleSlider.value = 1500; // Snap back to stop
+            updateControls();
+        };
+
+        function emergencyStop() {
+            steerSlider.value = 90;
+            throttleSlider.value = 1500;
+            updateControls();
+        }
+
+        // TAB SWITCHING
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+
+            document.getElementById(`tab-${tabName}`).classList.add('active');
+            // Update buttons
+            const btns = document.querySelectorAll('.tab-btn');
+            if (tabName === 'dashboard') btns[0].classList.add('active');
+            else btns[1].classList.add('active');
+
+            // Resize canvas if switching to dashboard
+            if (tabName === 'dashboard') setTimeout(resizeCanvas, 100);
+        }
+
+        // MANUAL CONTROL LOGIC
+        let speedLimit = 0.25; // Default slow
+        const PWM_STOP = 1500;
+        const PWM_MAX_FWD = 1700;
+        const PWM_MAX_REV = 1300;
+        const STEER_CENTER = 90;
+        const STEER_LEFT = 50;
+        const STEER_RIGHT = 130;
+
+        function setSpeedLimit(mode) {
+            document.querySelectorAll('.speed-btn').forEach(el => el.classList.remove('active'));
+            const btnIndex = mode === 'slow' ? 0 : mode === 'med' ? 1 : 2;
+            document.querySelectorAll('.speed-btn')[btnIndex].classList.add('active');
+
+            if (mode === 'slow') speedLimit = 0.25;
+            if (mode === 'med') speedLimit = 0.50;
+            if (mode === 'fast') speedLimit = 1.0;
+        }
+
+        // Keyboard State
+        const keys = { w: false, a: false, s: false, d: false };
+
+        window.addEventListener('keydown', (e) => {
+            const k = e.key.toLowerCase();
+            if (k === ' ') { emergencyStop(); return; }
+            if (keys.hasOwnProperty(k)) {
+                if (!keys[k]) { // Key press start
+                    keys[k] = true;
+                    updateDriveFromKeys();
+                    // Ensure auto-nav is off
+                    toggleNav(false);
+                }
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            const k = e.key.toLowerCase();
+            if (keys.hasOwnProperty(k)) {
+                keys[k] = false;
+                updateDriveFromKeys();
+            }
+        });
+
+        function updateDriveFromKeys() {
+            let steer = STEER_CENTER;
+            let speed = 0; // -1 to 1
+
+            // Throttle
+            if (keys.w) speed += 1;
+            if (keys.s) speed -= 1;
+
+            // Steering
+            if (keys.a) steer = STEER_LEFT;
+            if (keys.d) steer = STEER_RIGHT;
+
+            // Apply Speed Limit
+            const pwmOffset = 200 * speedLimit * speed; // Max 200 offset
+            const throttle = PWM_STOP + pwmOffset;
+
+            sendControl(steer, throttle);
+        }
+
+        // D-Pad Button Handlers (Touch/Mouse)
+        function attachButton(id, key) {
+            const btn = document.getElementById(id);
+            const press = () => {
+                keys[key] = true;
+                btn.classList.add('pressed');
+                toggleNav(false);
+                updateDriveFromKeys();
+            };
+            const release = () => {
+                keys[key] = false;
+                btn.classList.remove('pressed');
+                updateDriveFromKeys();
+            };
+
+            btn.addEventListener('mousedown', press);
+            btn.addEventListener('mouseup', release);
+            btn.addEventListener('mouseleave', release);
+            btn.addEventListener('touchstart', (e) => { e.preventDefault(); press(); });
+            btn.addEventListener('touchend', (e) => { e.preventDefault(); release(); });
+        }
+
+        attachButton('btn-up', 'w');
+        attachButton('btn-down', 's');
+        attachButton('btn-left', 'a');
+        attachButton('btn-right', 'd');
+
+        // Stop Button
+        document.getElementById('btn-stop').addEventListener('click', emergencyStop);
+
+        // Unified API Sender
+        function sendControl(steer, throttle) {
+            // Update UI sliders too, for feedback
+            steerSlider.value = steer;
+            throttleSlider.value = throttle;
+
+            // Update text labels
+            steerVal.innerText = steer;
+            const speedPct = Math.round((throttle - 1500) / 2);
+            throttleVal.innerText = Math.abs(speedPct);
+
+            fetch('/api/control', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    steer: parseInt(steer),
+                    throttle: parseInt(throttle)
+                })
+            });
+        }
+    </script>
+
+    <div id="debug-log"
+        style="position: fixed; bottom: 0; left: 0; background: rgba(0,0,0,0.8); color: red; width: 100%; padding: 5px; font-family: monospace; font-size: 10px; z-index: 9999;">
+    </div>
+
+    <script>
+        // ... (existing js) ...
+        const debugDiv = document.getElementById('debug-log');
+
+        async function fetchTelemetry() {
+            try {
+                const res = await fetch('/api/telemetry');
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+
+                // Clear previous errors if successful
+                debugDiv.innerText = "";
+
+                // ... (rest of logic) ...
+                document.getElementById('pitch').innerText = Math.round(data.pitch);
+                document.getElementById('roll').innerText = Math.round(data.roll);
+                document.getElementById('dist-ultra').innerText = data.dist === 999 ? "---" : Math.round(data.dist);
+                document.getElementById('dist-lidar').innerText = data.lidar_dist ? Math.round(data.lidar_dist * 100) : "---";
+
+                document.getElementById('gps-val').innerText = `${data.gps.lat.toFixed(5)}, ${data.gps.lon.toFixed(5)}`;
+                document.getElementById('gps-sats').innerText = data.gps.sats;
+                document.getElementById('gps-fix').innerText = data.gps.fix;
+
+                const fixPill = document.getElementById('fix-status');
+                if (data.gps.fix > 0) { fixPill.innerText = "LOCKED"; fixPill.className = "status-pill status-ok"; }
+                else { fixPill.innerText = "NO FIX"; fixPill.className = "status-pill status-warn"; }
+
+                const beaconPill = document.getElementById('beacon-status');
+                if (data.beacon && data.beacon.valid && data.beacon.age < 5) {
+                    document.getElementById('beacon-val').innerText = `${data.beacon.lat.toFixed(5)}, ${data.beacon.lon.toFixed(5)}`;
+                    document.getElementById('beacon-acc').innerText = data.beacon.accuracy.toFixed(1);
+                    document.getElementById('beacon-age').innerText = data.beacon.age.toFixed(1);
+                    document.getElementById('beacon-rssi').innerText = data.beacon.rssi || "--";
+                    beaconPill.innerText = "LIVE";
+                    if (data.beacon.rssi && data.beacon.rssi < -80) { beaconPill.className = "status-pill status-warn alert-active"; beaconPill.innerText = "WEAK"; }
+                    else { beaconPill.className = "status-pill status-ok"; }
+                }
+
+                const navPill = document.getElementById('nav-status-pill');
+                const navMode = document.getElementById('nav-mode-display');
+                if (data.nav_mode && data.nav_mode !== "OFF") {
+                    navPill.innerText = "ACTIVE"; navPill.className = "status-pill status-ok alert-active";
+                    navMode.innerText = data.nav_mode;
+                    document.getElementById('navStartBtn').style.display = 'none';
+                    document.getElementById('navStopBtn').style.display = 'block';
+                } else {
+                    navPill.innerText = "OFF"; navPill.className = "status-pill status-warn";
+                    navMode.innerText = "STANDBY";
+                    document.getElementById('navStartBtn').style.display = 'block';
+                    document.getElementById('navStopBtn').style.display = 'none';
+                }
+
+                const tiltStatus = document.getElementById('tilt-status');
+                if (data.tipped) { tiltStatus.innerText = "TIPPED!"; tiltStatus.className = "status-pill status-warn alert-active"; }
+                else { tiltStatus.innerText = "LEVEL"; tiltStatus.className = "status-pill status-ok"; }
+
+                const blockStatus = document.getElementById('block-status');
+                if (data.blocked) { blockStatus.innerText = "BLOCKED!"; blockStatus.className = "status-pill status-warn alert-active"; }
+                else { blockStatus.innerText = "CLEAR"; blockStatus.className = "status-pill status-ok"; }
+
+                if (data.scan) {
+                    drawLidar(data.scan);
+                    if (data.tracking_target) drawTrackingTarget(data.tracking_target);
+                }
+
+            } catch (e) {
+                console.error("Telemetry failed", e);
+                debugDiv.innerText = "TELEMETRY ERROR: " + e.message;
+            }
+        }
+
+        setInterval(fetchTelemetry, 200);
+    </script>
+</body>
+
+</html>
