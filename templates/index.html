@@ -118,6 +118,7 @@
             background: #1e293b;
             outline: none;
             -webkit-appearance: none;
+            appearance: none;
         }
 
         input[type="range"]::-webkit-slider-thumb {
@@ -384,7 +385,7 @@
 
             <!-- PWM/DEBUG SLIDERS (REQUIRED BY JS) -->
             <div style="display: none;">
-                <input type="range" id="steer-slider" min="50" max="130" value="90">
+                <input type="range" id="steer-slider" min="10" max="170" value="90">
                 <input type="range" id="throttle-slider" min="1000" max="2000" value="1500">
             </div>
 
@@ -402,8 +403,8 @@
             <!-- Speed Control -->
             <label>SPEED LIMIT</label>
             <div class="speed-control">
-                <button class="speed-btn active" onclick="setSpeedLimit('slow')">SLOW (25%)</button>
-                <button class="speed-btn" onclick="setSpeedLimit('med')">MED (50%)</button>
+                <button class="speed-btn active" onclick="setSpeedLimit('slow')">SLOW (50%)</button>
+                <button class="speed-btn" onclick="setSpeedLimit('med')">MED (75%)</button>
                 <button class="speed-btn" onclick="setSpeedLimit('fast')">FAST (100%)</button>
             </div>
 
@@ -647,21 +648,21 @@
         }
 
         // MANUAL CONTROL LOGIC
-        let speedLimit = 0.25; // Default slow
+        let speedLimit = 0.50; // Default slow (matches UI)
         const PWM_STOP = 1500;
         const PWM_MAX_FWD = 1700;
         const PWM_MAX_REV = 1300;
         const STEER_CENTER = 90;
-        const STEER_LEFT = 50;
-        const STEER_RIGHT = 130;
+        const STEER_LEFT = 10;
+        const STEER_RIGHT = 170;
 
         function setSpeedLimit(mode) {
             document.querySelectorAll('.speed-btn').forEach(el => el.classList.remove('active'));
             const btnIndex = mode === 'slow' ? 0 : mode === 'med' ? 1 : 2;
             document.querySelectorAll('.speed-btn')[btnIndex].classList.add('active');
 
-            if (mode === 'slow') speedLimit = 0.25;
-            if (mode === 'med') speedLimit = 0.50;
+            if (mode === 'slow') speedLimit = 0.50;  // Was 0.25 (in deadband)
+            if (mode === 'med') speedLimit = 0.75;   // Was 0.50
             if (mode === 'fast') speedLimit = 1.0;
         }
 
@@ -701,8 +702,10 @@
             if (keys.a) steer = STEER_LEFT;
             if (keys.d) steer = STEER_RIGHT;
 
-            // Apply Speed Limit
-            const pwmOffset = 200 * speedLimit * speed; // Max 200 offset
+            // Apply Speed Limit - Asymmetric offset for ESC deadband
+            // Forward: 200 offset, Reverse: 350 offset (ESC has larger reverse deadband)
+            const baseOffset = speed < 0 ? 350 : 200;
+            const pwmOffset = baseOffset * speedLimit * speed;
             const throttle = PWM_STOP + pwmOffset;
 
             sendControl(steer, throttle);
@@ -758,6 +761,14 @@
                 })
             });
         }
+
+        // Heartbeat: Resend control command every 200ms to prevent firmware safety timeout (1s)
+        setInterval(() => {
+            if (document.getElementById('tab-manual').classList.contains('active')) {
+                // Resend current slider values to keep connection alive
+                sendControl(steerSlider.value, throttleSlider.value);
+            }
+        }, 200);
     </script>
 
     <div id="debug-log"

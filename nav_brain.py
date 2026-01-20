@@ -1,9 +1,10 @@
 """
-NavigationBrain - Pure logic for person-following behavior.
-Accepts sensor data and returns motor commands.
+NavigationBrain - Vision+Lidar Person-Following with Smooth Homing.
+Revamped for reliable target tracking with persistence and search behavior.
 """
 
 import math
+import time
 
 class NavigationBrain:
     def __init__(self):
@@ -15,205 +16,170 @@ class NavigationBrain:
 
         # Tracking State
         self.last_known_bearing = 0
-        self.last_target_time = 0
+        self.last_vision_time = 0
+        self.target_lost_time = 0
+        self.search_direction = 1  # 1 = right, -1 = left
 
         # Tuning Parameters
-        self.GPS_SWITCH_DIST = 5.0      # Switch to Lidar below this (meters)
-        self.STOP_DIST = 1.0            # Stop when this close (meters)
-        self.MAX_SPEED = 30             # Max speed percentage
-        self.STEER_GAIN = 0.5           # How aggressively to steer
+        self.STOP_DIST = 0.5            # Stop when this close (meters)
+        self.APPROACH_DIST = 2.0        # Start slowing down here
+        self.MAX_SPEED = 40             # Max speed percentage
+        self.MIN_SPEED = 15             # Minimum speed to prevent stalling
+        self.STEER_KP = 1.5             # Proportional gain for steering
+        self.STEER_DEADBAND = 3.0       # Degrees - ignore small errors
+        self.COAST_TIMEOUT = 2.0        # Seconds to coast after losing vision
+        self.SEARCH_TIMEOUT = 5.0       # Seconds to search before stopping
+        self.LIDAR_TOLERANCE = 10.0     # Degrees tolerance for lidar matching
 
     def compute(self, robot_pos, beacon_pos, lidar_scan, current_rssi=-100, vision_data=None):
         """
-        Compute steer and throttle based on latest sensor data.
+        Compute steer and throttle based on vision + lidar.
         Returns: (steer_val, throttle_val, mode_string)
         """
+        now = time.time()
+        
         # Reset Target State
         self.target_source = "NONE"
         self.target_bearing = 0
         self.target_distance = 0
         
-        # 1. Determine Target Properties
-        import time
-        now = time.time()
-
+        # Check for vision detection
         has_vision = False
-        if vision_data and (now - vision_data.get('ts', 0) < 1.0):
-             has_vision = True
-
-        has_gps = False
-        if beacon_pos and beacon_pos.get('valid') and robot_pos.get('fix', 0) > 0:
-             # Check if beacon data is fresh enough (e.g. < 5s old)
-             if beacon_pos.get('age', 99) < 5.0:
-                 has_gps = True
-
-        has_rssi = current_rssi > -90 # Simple threshold
-
+        if vision_data and (now - vision_data.get('ts', 0) < 0.5):
+            has_vision = True
+            self.last_vision_time = now
+            self.last_known_bearing = vision_data['bearing']
+            # Remember which side target was last seen
+            self.search_direction = 1 if vision_data['bearing'] > 0 else -1
         
+        # --- STATE MACHINE ---
         
         if has_vision:
-            # VISION PRIORITY: If we see a person, track them!
-            self.target_bearing = vision_data['bearing']
-            self.target_source = "VISION"
+            # ACTIVE TRACKING: Vision is working
+            self.target_lost_time = 0
+            return self._track_target(vision_data, lidar_scan)
             
-            # SENSOR FUSION: Use Lidar to validate distance
-            # Find Lidar points within small angle of visual bearing
-            lidar_dist = self._get_lidar_distance_at_angle(lidar_scan, self.target_bearing, tolerance=10.0)
+        else:
+            # VISION LOST
+            time_since_vision = now - self.last_vision_time
             
-            if lidar_dist:
-                # GREAT SUCCESS: We have visual confirmation AND laser precision
-                self.target_distance = lidar_dist
-                self.target_source = "VISION+LIDAR"
-            elif has_rssi:
-                 # ESTIMATION: Visual bearing is good, but no Lidar hit (too low? too high?)
-                 self.target_distance = 10 ** ((-59 - current_rssi) / 25.0)
+            if time_since_vision < self.COAST_TIMEOUT:
+                # COAST: Continue toward last known position
+                return self._coast_mode(lidar_scan)
+                
+            elif time_since_vision < self.SEARCH_TIMEOUT:
+                # SEARCH: Spin toward last known direction
+                return self._search_mode()
+                
             else:
-                 self.target_distance = 1.0 # Default/Safe distance if unknown
+                # STOP: Given up
+                self.mode = "STOPPED"
+                return 90, 1500, "STOPPED"
 
-        elif has_gps:
-            # GPS FUSION: Use GPS as primary source
-            self.target_distance = self._haversine(
-                robot_pos['lat'], robot_pos['lon'],
-                beacon_pos['lat'], beacon_pos['lon']
-            )
-            self.target_bearing = self._bearing(
-                robot_pos['lat'], robot_pos['lon'],
-                beacon_pos['lat'], beacon_pos['lon']
-            )
-            self.target_source = "GPS"
-        elif has_rssi:
-            # RSSI FALLBACK: Estimate distance from signal
-            # Standard Formula: dist = 10 ^ ((TxPower - RSSI) / (10 * n))
-            # Tuned for Phone Bluetooth: 
-            # - Ref Power (at 1m) = -59 dBm (was -35 which is too high)
-            # - N (Env Factor) = 2.5 (Indoor/Mixed)
-            # Example: -59 -> 1.0m, -35 -> 0.1m, -84 -> 10m
-            self.target_distance = 10 ** ((-59 - current_rssi) / 25.0)
-            self.target_bearing = 0 # Direction unknown without GPS/Lidar
-            self.target_source = "RSSI"
+    def _track_target(self, vision_data, lidar_scan):
+        """Active tracking with vision lock."""
+        self.target_bearing = vision_data['bearing']
+        self.target_source = "VISION"
+        
+        # Get distance from Lidar
+        lidar_dist = self._get_lidar_distance_at_angle(
+            lidar_scan, self.target_bearing, tolerance=self.LIDAR_TOLERANCE
+        )
+        
+        if lidar_dist:
+            self.target_distance = lidar_dist
+            self.target_source = "VISION+LIDAR"
         else:
-            self.mode = "STOPPED"
-            return 90, 1500, "NO_SIGNAL"
-
-
-        # 2. Select Navigation Mode
+            # Estimate distance based on bbox size if available
+            bbox = vision_data.get('bbox')
+            if bbox:
+                _, _, w, h = bbox
+                # Larger bbox = closer object
+                self.target_distance = max(0.5, 500.0 / max(w, h))
+            else:
+                self.target_distance = 1.5  # Default
+        
+        # Check stop condition
         if self.target_distance < self.STOP_DIST:
-             self.mode = "STOPPED"
-        elif has_vision:
-             self.mode = "VISION_TRACKING"
-        elif self.target_distance < self.GPS_SWITCH_DIST:
-             self.mode = "LIDAR_TRACKING" # Handover to Lidar for precision
-        elif has_gps:
-             self.mode = "GPS_FOLLOWING"
+            self.mode = "ARRIVED"
+            return 90, 1500, "ARRIVED"
+        
+        # Compute steering with P-controller and deadband
+        steer = self._compute_steering(self.target_bearing)
+        
+        # Compute throttle with distance-based scaling
+        throttle = self._compute_throttle(self.target_distance)
+        
+        self.mode = "TRACKING"
+        return steer, throttle, self.mode
+
+    def _coast_mode(self, lidar_scan):
+        """Coast toward last known bearing."""
+        self.target_bearing = self.last_known_bearing
+        self.target_source = "MEMORY"
+        
+        # Check lidar for obstacle
+        lidar_dist = self._get_lidar_distance_at_angle(
+            lidar_scan, self.target_bearing, tolerance=self.LIDAR_TOLERANCE
+        )
+        self.target_distance = lidar_dist if lidar_dist else 2.0
+        
+        if self.target_distance < self.STOP_DIST:
+            self.mode = "ARRIVED"
+            return 90, 1500, "ARRIVED"
+        
+        steer = self._compute_steering(self.target_bearing)
+        throttle = self._compute_throttle(self.target_distance * 0.7)  # Slower when coasting
+        
+        self.mode = "COASTING"
+        return steer, throttle, self.mode
+
+    def _search_mode(self):
+        """Spin to search for target."""
+        self.target_source = "SEARCHING"
+        self.target_distance = 0
+        
+        # Slow spin in the direction target was last seen
+        spin_offset = 25 * self.search_direction
+        steer = 90 + spin_offset
+        steer = max(50, min(130, steer))
+        
+        self.mode = "SEARCHING"
+        return steer, 1500, self.mode  # No forward motion while searching
+
+    def _compute_steering(self, bearing):
+        """P-controller with deadband for smooth steering."""
+        # Apply deadband
+        if abs(bearing) < self.STEER_DEADBAND:
+            return 90  # Centered
+        
+        # P-controller
+        steer_output = 90 + int(bearing * self.STEER_KP)
+        
+        # Clamp to safe range
+        return max(50, min(130, steer_output))
+
+    def _compute_throttle(self, distance):
+        """Distance-based throttle for smooth approach."""
+        if distance < self.STOP_DIST:
+            return 1500  # Stop
+        
+        if distance > self.APPROACH_DIST:
+            # Far away - max speed
+            speed = self.MAX_SPEED
         else:
-             # RSSI only and far away? Try Lidar anyway to find object
-             self.mode = "LIDAR_TRACKING"
+            # Proportional slowdown as we get closer
+            ratio = (distance - self.STOP_DIST) / (self.APPROACH_DIST - self.STOP_DIST)
+            speed = self.MIN_SPEED + (self.MAX_SPEED - self.MIN_SPEED) * ratio
+        
+        # Convert speed percentage to PWM (1500 = stop, 1700 = full forward)
+        pwm = 1500 + int(speed * 2)
+        return min(1700, pwm)
 
-        # 3. Execute Control Logic
-        if self.mode == "STOPPED":
-             return 90, 1500, self.mode
-             
-        elif self.mode == "GPS_FOLLOWING":
-             # Simple bearing-based steering
-             error = self.target_bearing # Assuming 0 heading
-             while error > 180: error -= 360
-             while error < -180: error += 360
-             
-             steer = 90 + int(error * self.STEER_GAIN)
-             steer = max(60, min(120, steer))
-             
-             speed = min(self.MAX_SPEED, self.target_distance * 8)
-             throttle = 1500 + int(speed * 2)
-             return steer, throttle, self.mode
-             
-        elif self.mode == "VISION_TRACKING":
-             # Vision gives us a good bearing
-             steer = 90 + int(self.target_bearing * self.STEER_GAIN * 1.5) # Boost gain a bit?
-             steer = max(60, min(120, steer))
-             
-             # Use Distance for throttle
-             # Slow down as we get closer (target_distance is in meters)
-             speed = min(self.MAX_SPEED, self.target_distance * 10)
-             throttle = 1500 + int(speed * 2)
-             
-             return steer, throttle, self.mode
-
-        elif self.mode == "LIDAR_TRACKING":
-             if not lidar_scan:
-                 return 90, 1500, "LIDAR_LOST"
-                 
-             # FUSION: Filter points based on Estimated Target Distance
-             # Widen tolerance to 3000mm (3m) to handle noisy/saturated RSSI
-             # If RSSI says 0.1m (saturated), we still want to find the user at 1.5m
-             target_mm = self.target_distance * 1000
-             tolerance_mm = 3000 
-             
-             candidates = []
-             for a, d in lidar_scan:
-                 if -60 < a < 60 and d > 150: # In front, ignore self/noise
-                     if abs(d - target_mm) < tolerance_mm:
-                         candidates.append((a, d))
-                         
-             if candidates:
-                 # Found matching objects!
-                 
-                 # TRACKING STRATEGY: Prioritize Distance Match, then Angle
-                 # 1. Find object closest to Expected Distance (RSSI)
-                 # 2. Break ties with Stickiness/Center (Angle)
-                 
-                 import time
-                 now = time.time()
-                 if now - self.last_target_time < 2.0:
-                     bias_angle = self.last_known_bearing
-                 else:
-                     bias_angle = 0
-                 
-                 # Tuples compare element by element.
-                 # Primary Key: Abs Diff from Target Distance (RSSI)
-                 # Secondary Key: Abs Diff from Bias Angle
-                 # This ensures even if RSSI is 0.1m, we pick the object at 1.5m over the wall at 3m.
-                 closest = min(candidates, key=lambda p: (abs(p[1] - target_mm), abs(p[0] - bias_angle)))
-                 angle, dist_mm = closest
-                 
-                 # Update State
-                 self.last_known_bearing = angle
-                 self.last_target_time = now
-                 
-                 # Update Target with precise Lidar data
-                 self.target_bearing = angle
-                 self.target_distance = dist_mm / 1000.0
-                 self.target_source = "LIDAR"
-                 
-                 # Steer towards it
-                 steer = 90 + int(angle * 0.6)
-                 steer = max(60, min(120, steer))
-                 
-                 speed = min(self.MAX_SPEED, self.target_distance * 12)
-                 throttle = 1500 + int(speed * 2)
-                 return steer, throttle, self.mode
-             else:
-                 return 90, 1500, "LIDAR_SEARCHING"
-
-        return 90, 1500, self.mode
-
-    def _haversine(self, lat1, lon1, lat2, lon2):
-        R = 6371000
-        phi1, phi2 = math.radians(lat1), math.radians(lat2)
-        dphi = math.radians(lat2 - lat1)
-        dlam = math.radians(lon2 - lon1)
-        a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlam/2)**2
-        return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-
-    def _bearing(self, lat1, lon1, lat2, lon2):
-        phi1, phi2 = math.radians(lat1), math.radians(lat2)
-        dlam = math.radians(lon2 - lon1)
-        x = math.sin(dlam) * math.cos(phi2)
-        y = math.cos(phi1)*math.sin(phi2) - math.sin(phi1)*math.cos(phi2)*math.cos(dlam)
-        return math.degrees(math.atan2(x, y))
-
-    def _get_lidar_distance_at_angle(self, scan, target_angle, tolerance=5.0):
+    def _get_lidar_distance_at_angle(self, scan, target_angle, tolerance=10.0):
         """
-        Finds the closest lidar point within +/- tolerance of target_angle.
+        Find closest lidar point within tolerance of target_angle.
+        Uses median filtering for noise reduction.
         Returns distance in meters, or None.
         """
         if not scan:
@@ -221,18 +187,19 @@ class NavigationBrain:
         
         matches = []
         for angle, dist_mm in scan:
-            # Check angle difference (handle 360 wrap if needed, but here simple diff usually works for -180 to 180)
             diff = abs(angle - target_angle)
-            if diff > 180: diff = abs(diff - 360)
+            if diff > 180:
+                diff = abs(diff - 360)
             
             if diff < tolerance:
-                # Valid candidate
-                # Filter noise: Must be valid distance (>0.1m and < 5.0m)
-                if 100 < dist_mm < 5000:
+                # Filter noise: valid range 0.2m to 5.0m
+                if 200 < dist_mm < 5000:
                     matches.append(dist_mm)
         
         if matches:
-            # Return minimum distance (closest object in that direction blocks view)
-            return min(matches) / 1000.0
+            # Use median to filter outliers
+            matches.sort()
+            median_idx = len(matches) // 2
+            return matches[median_idx] / 1000.0
         
         return None

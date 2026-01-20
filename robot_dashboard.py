@@ -171,6 +171,17 @@ class RobotState:
 
                 # ALWAYS compute tracking target (for UI)
                 vision_data = self.vision.get_latest_detection()
+                
+                # Inject lidar distance into vision for overlay
+                if vision_data:
+                    # Lidar angle 0 = front, vision bearing 0 = center
+                    # Use wider tolerance (25 deg) for better matching
+                    lidar_dist = self.nav._get_lidar_distance_at_angle(scan, vision_data.get('bearing', 0), tolerance=25.0)
+                    self.vision.set_lidar_distance(lidar_dist)
+                    # DEBUG
+                    if lidar_dist:
+                        print(f"FUSION: Vision@{vision_data.get('bearing', 0):.1f}deg -> Lidar={lidar_dist:.2f}m")
+                
                 steer, throttle, mode = self.nav.compute(
                     self.telemetry["gps"],
                     b_data,
@@ -200,31 +211,12 @@ class RobotState:
         if not is_auto:
             self.manual_steer = steer
             self.manual_throttle = throttle
-            # Rate limiting for manual inputs in UI is handled by event listeners,
-            # but we add a backend check just in case.
         
-        # Deduplication & Rate Limiting (Max 50Hz = 0.02s)
-        current_time = time.time()
-        
-        # Create unique command signature
-        cmd_sig = (steer, throttle)
-        
-        # If identical to last command, only send if it's been > 1 second (keepalive)
-        if hasattr(self, 'last_sent_sig') and self.last_sent_sig == cmd_sig:
-            if current_time - self.last_cmd_send_time < 0.5:
-                return
-        
-        # Hard rate limit (20ms)
-        if hasattr(self, 'last_cmd_send_time') and current_time - self.last_cmd_send_time < 0.02:
-            return
-
+        # Send command directly - no rate limiting (handled by heartbeat)
         if self.ser:
             with self.ser_lock:
                 msg = f"<{steer},{throttle}>\n"
                 self.ser.write(msg.encode())
-                
-            self.last_cmd_send_time = current_time
-            self.last_sent_sig = cmd_sig
 
 robot = RobotState()
 

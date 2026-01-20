@@ -13,6 +13,7 @@ class VisionDriver:
         self.frame_lock = threading.Lock()
         self.current_frame = None
         self.last_detection = None # (bearing, distance_estimate, timestamp)
+        self.lidar_distance = None # Injected from dashboard
         
         # Initialize HSV ranges for Light Green
         # Tuning: Tightened range to reduce sensitivity/noise
@@ -116,9 +117,16 @@ class VisionDriver:
                 center_offset = (x_center - (self.width / 2)) / (self.width / 2)
                 bearing = center_offset * 30.0 # Approx 60 deg fov
                 
+                # Draw distance overlay if available
+                if self.lidar_distance is not None:
+                    dist_text = f"{self.lidar_distance:.2f}m"
+                    cv2.putText(frame, dist_text, (x, y - 10), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                
                 self.last_detection = {
                     "bearing": bearing,
                     "bbox": (x, y, w, h),
+                    "distance": self.lidar_distance,
                     "ts": time.time()
                 }
             
@@ -139,3 +147,7 @@ class VisionDriver:
     def get_latest_detection(self):
         """Returns dictionary of latest detection info"""
         return self.last_detection
+
+    def set_lidar_distance(self, distance):
+        """Set the lidar distance to be overlaid on video"""
+        self.lidar_distance = distance

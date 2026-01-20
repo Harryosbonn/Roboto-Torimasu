@@ -50,7 +50,7 @@ void setup() {
   steeringServo.write(90);
   delay(2000);
 
-  // Init MPU6050 (Bypassed if hang suspected)
+  // Init MPU6050
   Serial.println("INIT: Initializing I2C...");
   Wire.begin();
   Wire.beginTransmission(MPU_ADDR);
@@ -64,11 +64,13 @@ void setup() {
   } else {
     Serial.println("INIT: IMU NOT FOUND! Bypassing...");
   }
+  // Serial.println("INIT: IMU DISABLED (BYPASS)");
   
   Serial.println("READY");
 }
 
 void loop() {
+  // 1. Read Sensors
   // 1. Read Sensors
   readIMU();
   long dist = readUltrasonic();
