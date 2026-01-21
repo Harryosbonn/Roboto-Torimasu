@@ -427,6 +427,7 @@
 
             <button class="btn-stop" onclick="emergencyStop()">EMERGENCY STOP (SPACE)</button>
         </div>
+
     </div>
 
     <!-- Lidar Visualizer Card -->
@@ -740,6 +741,32 @@
 
         // Stop Button
         document.getElementById('btn-stop').addEventListener('click', emergencyStop);
+
+        // Keyboard Listeners
+        window.addEventListener('keydown', (e) => {
+            if (e.repeat) return;
+            const key = e.key.toLowerCase();
+            if (keys.hasOwnProperty(key)) {
+                keys[key] = true;
+                // Visual feedback on d-pad
+                const btnId = key === 'w' ? 'btn-up' : key === 's' ? 'btn-down' : key === 'a' ? 'btn-left' : 'btn-right';
+                document.getElementById(btnId).classList.add('pressed');
+                toggleNav(false);
+                updateDriveFromKeys();
+            }
+            if (e.key === ' ') emergencyStop();
+        });
+
+        window.addEventListener('keyup', (e) => {
+            const key = e.key.toLowerCase();
+            if (keys.hasOwnProperty(key)) {
+                keys[key] = false;
+                // Visual feedback on d-pad
+                const btnId = key === 'w' ? 'btn-up' : key === 's' ? 'btn-down' : key === 'a' ? 'btn-left' : 'btn-right';
+                document.getElementById(btnId).classList.remove('pressed');
+                updateDriveFromKeys();
+            }
+        });
 
         // Unified API Sender
         function sendControl(steer, throttle) {

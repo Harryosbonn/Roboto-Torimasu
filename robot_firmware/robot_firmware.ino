@@ -109,6 +109,50 @@ void loop() {
   }
 
   // 4. Actuate
+  // 4. Actuate
+  static int lastSteer = -1;
+  static int lastThrottle = -1;
+  static bool lastAlarmState = false;
+
+  bool stateChanged = (alarmActive != lastAlarmState) || (isTimedOut != lastAlarmState); // excessive simplification, let's just force update on state change
+  
+  // Force update if safety state changes
+  if (alarmActive || isTimedOut) {
+      if (!lastAlarmState) { // Transition to safe state
+         stopMotors();
+         lastAlarmState = true;
+         lastSteer = 90; 
+         lastThrottle = 1500;
+      }
+      digitalWrite(PIN_BUZZER, alarmActive ? HIGH : LOW);
+  } else {
+      lastAlarmState = false;
+      
+      // Determine target values
+      int targetSteer = currentCmd.steer;
+      int targetThrottle = currentCmd.throttle;
+
+      // Obstacle Override
+      if (isBlocked && targetThrottle > 1500) {
+         targetThrottle = 1500;
+         tone(PIN_BUZZER, 1000, 100);
+      } else {
+         noTone(PIN_BUZZER);
+      }
+
+      // WRITE ONLY ON CHANGE (Reduces Jitter)
+      if (targetSteer != lastSteer) {
+          steeringServo.write(targetSteer);
+          lastSteer = targetSteer;
+      }
+
+      if (targetThrottle != lastThrottle) {
+          throttleESC.writeMicroseconds(targetThrottle);
+          lastThrottle = targetThrottle;
+      }
+  }
+
+  // Debug Output
   static unsigned long lastDebugTime = 0;
   if (millis() - lastDebugTime > 200) { 
     Serial.print("DEBUG | Pitch:"); Serial.print(pitch);
@@ -122,20 +166,7 @@ void loop() {
     lastDebugTime = millis();
   }
 
-  if (!alarmActive && !isTimedOut) {
-    // Obstacle Override
-    if (isBlocked && currentCmd.throttle > 1500) { 
-       throttleESC.writeMicroseconds(1500);
-       tone(PIN_BUZZER, 1000, 100); // Beep warning
-    } else {
-       steeringServo.write(currentCmd.steer);
-       throttleESC.writeMicroseconds(currentCmd.throttle);
-    }
-  } else {
-    stopMotors();
-  }
-
-  delay(5); 
+  delay(2); // Reduced delay for responsiveness 
 }
 
 void stopMotors() {

@@ -217,6 +217,8 @@ class RobotState:
             with self.ser_lock:
                 msg = f"<{steer},{throttle}>\n"
                 self.ser.write(msg.encode())
+                # DEBUG: Show what's being sent
+                print(f"SERIAL TX: {msg.strip()}")
 
 robot = RobotState()
 
@@ -278,6 +280,7 @@ def control():
     steer = data.get('steer', 90)
     throttle = data.get('throttle', 1500)
     # Only allow manual override if auto_nav is off
+    print(f"CONTROL: steer={steer}, throttle={throttle}, auto_nav={robot.auto_nav}", flush=True)
     if not robot.auto_nav:
         robot.send_command(steer, throttle)
     return jsonify({"status": "ok"})

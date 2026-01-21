@@ -15,7 +15,7 @@ This workflow starts the main dashboard server (integrated with AI Vision) and b
 pip install --break-system-packages opencv-python-headless numpy
 ```
 
-2. Start the main dashboard (runs on https://10.86.157.230:5000):
+2. Start the main dashboard (runs on https://10.20.81.198:5000):
 ```bash
 cd /home/mono/Documents/robot && python robot_dashboard.py
 ```
@@ -27,6 +27,6 @@ cd /home/mono/Documents/robot && python beacon_receiver.py
 
 ## Access Points
 
-- **Dashboard**: https://10.86.157.230:5000
-- **Video Feed**: https://10.86.157.230:5000/video_feed
-- **Beacon Page**: https://10.86.157.230:5000/beacon
+- **Dashboard**: https://10.20.81.198:5000
+- **Video Feed**: https://10.20.81.198:5000/video_feed
+- **Beacon Page**: https://10.20.81.198:5000/beacon
