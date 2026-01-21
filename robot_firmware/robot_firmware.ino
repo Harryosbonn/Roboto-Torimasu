@@ -77,7 +77,7 @@ void loop() {
 
   // 2. Safety Checks
   bool isTipped = (abs(pitch) > MAX_TILT_ANGLE || abs(roll) > MAX_TILT_ANGLE);
-  bool isBlocked = (dist > 0 && dist < OBSTACLE_DIST_CM);
+  bool isBlocked = (dist > 5 && dist < OBSTACLE_DIST_CM);
   bool isTimedOut = (millis() - lastCommandTime) > SAFETY_TIMEOUT_MS;
 
   if (isTipped) {

@@ -1,0 +1,14 @@
+[Unit]
+Description=Autonomous Follower Robot Service
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /home/mono/Documents/robot/autonomous_follower.py --headless
+WorkingDirectory=/home/mono/Documents/robot
+StandardOutput=inherit
+StandardError=inherit
+Restart=always
+User=mono
+
+[Install]
+WantedBy=multi-user.target

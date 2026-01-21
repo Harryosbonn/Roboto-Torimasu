@@ -157,10 +157,14 @@ class FollowerBrain:
     ARRIVED_DISTANCE = 0.3   # Stop when very close (reduced from 0.5)
     APPROACH_DISTANCE = 1.2  # Start slowing
     
-    # Speed settings (percentage) - increased for more motor power
-    MAX_SPEED = 60       # TRACKING mode (was 35)
-    APPROACH_SPEED = 35  # APPROACHING mode (was 20) 
-    MIN_SPEED = 25       # Minimum when slowing (was 15)
+    MAX_SPEED = 70       # Sane base speed
+    APPROACH_SPEED = 40  # Slower approach
+    MIN_SPEED = 30       # Minimum moving
+    
+    # Speed multiplier range (adjusted via GUI)
+    SPEED_MIN = 0.3
+    SPEED_MAX = 1.0
+    SPEED_STEP = 0.1
     
     # Steering settings
     STEER_KP = 1.5
@@ -176,6 +180,13 @@ class FollowerBrain:
         self.target_distance = None
         self.last_known_bearing = 0
         self.search_direction = 1  # 1 = right, -1 = left
+        self.speed_multiplier = 0.5  # Start at 50% speed
+    
+    def adjust_speed(self, delta):
+        """Adjust speed multiplier by delta (+/- SPEED_STEP)."""
+        self.speed_multiplier = max(0.1, 
+                                     min(self.SPEED_MAX, 
+                                         self.speed_multiplier + delta))
         
     def compute(self, vision_data, obstacle_data, lidar_scan):
         """
@@ -240,8 +251,24 @@ class FollowerBrain:
         if obstacle_data and obstacle_data["action"] == "SLOW":
             speed = min(speed, self.MIN_SPEED)
         
-        throttle_pwm = 1500 + int(speed * 2)
+        # Apply speed multiplier (from GUI control)
+        # speed is 0-100 based on MAX_SPEED setting (e.g. 70)
+        target_speed = speed * self.speed_multiplier
         
+        # Non-linear mapping:
+        # If speed > 0, we must output at least MIN_PWM to move.
+        MIN_PWM = 1560  # Lowered from 1620 to allow slower crawl
+        MAX_PWM = 1750  # Lowered from 1950 to cap top speed
+        
+        if target_speed > 0:
+            # Normalize speed (0-100) to PWM range (1620-1950)
+            # We assume '100' is the theoretical max input speed
+            pct = min(1.0, target_speed / 100.0) 
+            pwm_range = MAX_PWM - MIN_PWM
+            throttle_pwm = MIN_PWM + int(pct * pwm_range)
+        else:
+            throttle_pwm = 1500
+            
         return steer, throttle_pwm, self.state
     
     def _compute_steering(self, bearing):
@@ -333,9 +360,9 @@ class FollowerGUI:
             title += " [PAUSED]"
         cv2.putText(header, title, (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
         
-        controls = "Q: Quit | P: Pause"
-        cv2.putText(header, controls, (combined.shape[1] - 200, 28), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
+        controls = "Q:Quit P:Pause +/-:Speed"
+        cv2.putText(header, controls, (combined.shape[1] - 240, 28), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
         
         final = np.vstack([header, combined])
         
@@ -462,6 +489,12 @@ class FollowerGUI:
         if vision_data:
             bearing_text = f"Bearing: {brain_state.target_bearing:.1f}deg"
             cv2.putText(frame, bearing_text, (10, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        
+        # Speed info (bottom of frame)
+        speed_pct = int(brain_state.speed_multiplier * 100)
+        speed_text = f"Speed: {speed_pct}%"
+        cv2.putText(frame, speed_text, (10, frame.shape[0] - 10), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
 
 
 class AutonomousFollower:
@@ -473,15 +506,16 @@ class AutonomousFollower:
     ARDUINO_BAUD = 115200
     CONTROL_HZ = 10
     
-    def __init__(self):
+    def __init__(self, headless=False):
         self.running = False
+        self.headless = headless
         
         # Components
         self.vision = VisionDriver(camera_index=0, width=320, height=240)
         self.lidar = LidarDriver(port="/dev/ttyUSB0", baudrate=230400)
         self.obstacle_avoidance = ObstacleAvoidance()
         self.brain = FollowerBrain()
-        self.gui = FollowerGUI()
+        self.gui = FollowerGUI() if not headless else None
         
         # Arduino connection
         self.arduino = None
@@ -514,9 +548,14 @@ class AutonomousFollower:
         else:
             print("✗ Lidar: Not connected")
         
-        print("=" * 50)
-        print("GUI starting... Press 'q' to quit, 'p' to pause")
-        print("=" * 50)
+        if not self.headless:
+            print("=" * 50)
+            print("GUI starting... Press 'q' to quit, 'p' to pause")
+            print("=" * 50)
+        else:
+            print("=" * 50)
+            print("HEADLESS MODE - Running without GUI")
+            print("=" * 50)
         
         self.running = True
         self._control_loop()
@@ -539,32 +578,41 @@ class AutonomousFollower:
                 obstacle_data = self.obstacle_avoidance.analyze(lidar_scan)
                 
                 # Compute control
-                if not self.gui.paused:
+                paused = False
+                if self.gui:
+                    paused = self.gui.paused
+                
+                if not paused:
                     steer, throttle, state = self.brain.compute(
                         vision_data, obstacle_data, lidar_scan
                     )
                     self._send_command(steer, throttle)
                 else:
-                    # Paused - stop motors
                     self._send_command(90, 1500)
                 
-                # Render GUI
-                gui_frame = self.gui.render(
-                    camera_frame, lidar_scan, obstacle_data, self.brain, vision_data
-                )
-                
-                cv2.imshow("Autonomous Follower", gui_frame)
-                
-                # Handle keyboard input
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord('q'):
-                    break
-                elif key == ord('p'):
-                    self.gui.paused = not self.gui.paused
-                    if self.gui.paused:
-                        print("[PAUSED] Motors stopped")
-                    else:
-                        print("[RESUMED]")
+                # Render GUI if active
+                if self.gui:
+                    gui_frame = self.gui.render(
+                        camera_frame, lidar_scan, obstacle_data, self.brain, vision_data
+                    )
+                    cv2.imshow("Autonomous Follower", gui_frame)
+                    
+                    # Handle keyboard input
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord('q'):
+                        break
+                    elif key == ord('p'):
+                        self.gui.paused = not self.gui.paused
+                        if self.gui.paused:
+                            print("[PAUSED] Motors stopped")
+                        else:
+                            print("[RESUMED]")
+                    elif key == ord('+') or key == ord('='):
+                        self.brain.adjust_speed(self.brain.SPEED_STEP)
+                        print(f"[SPEED] {int(self.brain.speed_multiplier * 100)}%")
+                    elif key == ord('-') or key == ord('_'):
+                        self.brain.adjust_speed(-self.brain.SPEED_STEP)
+                        print(f"[SPEED] {int(self.brain.speed_multiplier * 100)}%")
                 
                 # Rate limit
                 elapsed = time.time() - loop_start
@@ -589,6 +637,11 @@ class AutonomousFollower:
                 cmd = f"<{steer},{throttle}>"
                 self.arduino.write(cmd.encode())
                 self.last_command_time = now
+                
+                # Consume any debug lines quietly
+                while self.arduino.in_waiting > 0:
+                    self.arduino.readline()
+                    
             except Exception as e:
                 print(f"[!] Arduino write error: {e}")
     
@@ -601,7 +654,8 @@ class AutonomousFollower:
         self.running = False
         
         # Close GUI
-        cv2.destroyAllWindows()
+        if self.gui:
+            cv2.destroyAllWindows()
         
         # Stop motors first
         if self.arduino and self.arduino.is_open:
@@ -625,5 +679,11 @@ class AutonomousFollower:
 
 
 if __name__ == "__main__":
-    follower = AutonomousFollower()
+    import argparse
+    
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--headless", action="store_true", help="Run without GUI")
+    args = parser.parse_args()
+
+    follower = AutonomousFollower(headless=args.headless)
     follower.start()
