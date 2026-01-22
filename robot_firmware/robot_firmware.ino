@@ -1,5 +1,6 @@
 #include <Servo.h>
 #include <Wire.h>
+#include <avr/wdt.h>  // Hardware watchdog timer
 
 // --- KONFIGURATION ---
 #define PIN_SERVO 9
@@ -72,10 +73,17 @@ void setup() {
   }
   // Serial.println("INIT: IMU DISABLED (BYPASS)");
   
+  // Enable hardware watchdog (2 second timeout)
+  // If loop() hangs for >2s, Arduino auto-resets
+  wdt_enable(WDTO_2S);
+  
   Serial.println("READY");
 }
 
 void loop() {
+  // Pet the watchdog - prevents auto-reset as long as loop runs
+  wdt_reset();
+  
   // 1. Read Sensors
   readIMU();
   long rawDist = readUltrasonic();
@@ -202,17 +210,34 @@ void stopMotors() {
 }
 
 void readIMU() {
+  // Use timeout to prevent I2C hang when motors cause EMI
   Wire.beginTransmission(MPU_ADDR);
   Wire.write(0x3B); 
-  Wire.endTransmission(false);
-  Wire.requestFrom(MPU_ADDR, 6, true);
-  if (Wire.available() >= 6) {
-    int16_t AcX = Wire.read()<<8|Wire.read();
-    int16_t AcY = Wire.read()<<8|Wire.read();
-    int16_t AcZ = Wire.read()<<8|Wire.read();
-    pitch = atan2(AcY, AcZ) * 180 / PI;
-    roll  = atan2(-AcX, AcZ) * 180 / PI;
+  byte error = Wire.endTransmission(false);
+  
+  if (error != 0) {
+    // I2C error - skip this read to prevent hang
+    return;
   }
+  
+  // Request with timeout protection
+  unsigned long i2cStart = millis();
+  Wire.requestFrom(MPU_ADDR, 6, true);
+  
+  // Wait for data with timeout (100ms max)
+  while (Wire.available() < 6) {
+    if (millis() - i2cStart > 100) {
+      // Timeout - flush and return
+      while (Wire.available()) Wire.read();
+      return;
+    }
+  }
+  
+  int16_t AcX = Wire.read()<<8|Wire.read();
+  int16_t AcY = Wire.read()<<8|Wire.read();
+  int16_t AcZ = Wire.read()<<8|Wire.read();
+  pitch = atan2(AcY, AcZ) * 180 / PI;
+  roll  = atan2(-AcX, AcZ) * 180 / PI;
 }
 
 long readUltrasonic() {

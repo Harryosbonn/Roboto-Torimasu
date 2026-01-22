@@ -34,21 +34,76 @@ UDP_IP = "0.0.0.0"
 UDP_PORT = 5005
 
 class ArduinoLink:
-    def __init__(self, port):
+    """Robust Arduino connection with rate limiting and health monitoring."""
+    
+    PORTS_TO_TRY = ['/dev/ttyACM0', '/dev/ttyACM1', '/dev/ttyUSB0', '/dev/ttyUSB1']
+    COMMAND_RATE_LIMIT = 0.05  # 50ms between commands (20Hz max)
+    HEALTH_TIMEOUT = 3.0       # seconds without response triggers alert
+    
+    def __init__(self, port=None):
         self.ser = None
-        try:
-            self.ser = serial.Serial(port, BAUD_RATE, timeout=1)
-            time.sleep(2) # Wait for reset
-        except Exception as e:
-            print(f"Arduino Error: {e}")
+        self.last_command_time = 0
+        self.last_rx_time = time.time()
+        self.connected = False
+        
+        ports = [port] if port else self.PORTS_TO_TRY
+        
+        for p in ports:
+            try:
+                print(f"Arduino: Trying {p}...")
+                self.ser = serial.Serial(p, BAUD_RATE, timeout=0.1)
+                time.sleep(2)  # Wait for Arduino reset
+                self.connected = True
+                print(f"✓ Arduino: Connected on {p}")
+                break
+            except Exception as e:
+                continue
+        
+        if not self.connected:
+            print(f"✗ Arduino: Failed to connect on any port")
 
     def send_command(self, steer_angle, throttle_pwm):
-        # Steer: 0-180 (90 center)
-        # Throttle: 1000-2000 (1500 stop)
-        if self.ser:
-            msg = f"<{int(steer_angle)},{int(throttle_pwm)}>"
-            self.ser.write(msg.encode())
-            # print(f"Sent: {msg}")
+        """Send command with rate limiting and buffer management."""
+        now = time.time()
+        
+        # Rate limit to prevent serial buffer overflow
+        if now - self.last_command_time < self.COMMAND_RATE_LIMIT:
+            return False
+        
+        if self.ser and self.ser.is_open:
+            try:
+                # Consume any pending debug output first
+                while self.ser.in_waiting > 0:
+                    self.last_rx_time = time.time()
+                    line = self.ser.readline().decode('utf-8', errors='ignore').strip()
+                    if line and (line.startswith("DEBUG") or line.startswith("INIT")):
+                        print(f"[ARDUINO] {line}")
+                
+                # Send command
+                msg = f"<{int(steer_angle)},{int(throttle_pwm)}>"
+                self.ser.write(msg.encode())
+                self.last_command_time = now
+                
+                # Health check
+                if now - self.last_rx_time > self.HEALTH_TIMEOUT:
+                    if int(now) % 3 == 0:  # Print warning every ~3s
+                        print("[ALERT] Arduino silent - possible freeze or disconnect!")
+                
+                return True
+            except Exception as e:
+                print(f"[!] Arduino write error: {e}")
+                return False
+        return False
+    
+    def close(self):
+        """Safely close the connection."""
+        if self.ser and self.ser.is_open:
+            try:
+                self.ser.write(b"<90,1500>")  # Stop motors
+                time.sleep(0.1)
+                self.ser.close()
+            except:
+                pass
 
 class GPSModule:
     def __init__(self, port):
@@ -144,31 +199,48 @@ def calculate_avoidance(scan_data):
     return turn_cmd
 
 # --- MAIN CONTROL LOOP ---
+CONTROL_HZ = 10  # 10Hz main loop rate
+
 def main():
-    print("Starting Robot Control...")
+    print("=" * 50)
+    print("ROBOT MAIN - GPS Following Mode (Headless)")
+    print("=" * 50)
     
-    # Init Hardware
-    arduino = ArduinoLink(ARDUINO_PORT)
+    # Init Hardware (auto-detect Arduino port)
+    arduino = ArduinoLink()
     lidar = LidarDriver(LIDAR_PORT)
     lidar.start()
+    print(f"✓ Lidar: Started on {LIDAR_PORT}")
     
     # Start GPS Thread
-    gps_thread = threading.Thread(target=GPSModule(GPS_PORT).run)
+    gps = GPSModule(GPS_PORT)
+    gps_thread = threading.Thread(target=gps.run)
     gps_thread.daemon = True
     gps_thread.start()
+    print(f"✓ GPS: Thread started on {GPS_PORT}")
     
     # Start Telemetry Listener (User Position)
     udp_thread = threading.Thread(target=udp_listener)
     udp_thread.daemon = True
     udp_thread.start()
+    print(f"✓ UDP: Listening on port {UDP_PORT}")
+    
+    print("=" * 50)
+    print("Running... Press Ctrl+C to stop")
+    print("=" * 50)
 
     try:
         while True:
+            loop_start = time.time()
+            
             # 1. Check Safety / Target Freshness
             if time.time() - target_updated > 5:
                 # Lost signal from user -> STOP
                 arduino.send_command(90, 1500)
-                time.sleep(0.1)
+                # Rate-limited sleep
+                elapsed = time.time() - loop_start
+                if elapsed < (1.0 / CONTROL_HZ):
+                    time.sleep((1.0 / CONTROL_HZ) - elapsed)
                 continue
 
             # 2. Navigation Logic
@@ -200,16 +272,28 @@ def main():
                 throttle_cmd = 1500 # Stop (Arrived)
                 
             # Stop if very close obstacle in BOTH directions (Blind Alley)?
-            # Implemented in Arduino Firmware as Ultasonic interrupt, 
+            # Implemented in Arduino Firmware as Ultrasonic interrupt, 
             # Can also add Lidar Stop here if needed.
 
             arduino.send_command(steering_cmd, throttle_cmd)
-            time.sleep(0.1)
+            
+            # Rate limit main loop
+            elapsed = time.time() - loop_start
+            sleep_time = (1.0 / CONTROL_HZ) - elapsed
+            if sleep_time > 0:
+                time.sleep(sleep_time)
 
     except KeyboardInterrupt:
-        arduino.send_command(90, 1500)
+        print("\n[!] Interrupted by user")
+    finally:
+        print("\n" + "=" * 50)
+        print("SHUTTING DOWN...")
+        arduino.close()
+        print("✓ Arduino: Stopped")
         lidar.stop()
-        print("Stopping.")
+        print("✓ Lidar: Stopped")
+        print("=" * 50)
+        print("Shutdown complete.")
 
 if __name__ == '__main__':
     main()
