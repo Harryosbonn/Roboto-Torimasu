@@ -168,19 +168,23 @@ class FollowerBrain:
     
     # Steering settings
     STEER_KP = 1.5
-    STEER_DEADBAND = 3.0  # degrees
+    STEER_KD = 0.3            # Derivative gain for damping
+    STEER_DEADBAND = 3.0      # degrees
     
     # Timing
-    VISION_TIMEOUT = 0.5   # seconds - vision data considered stale
-    SEARCH_SPIN_SPEED = 20  # steering offset for searching
+    VISION_TIMEOUT = 0.5      # seconds - vision data considered stale
+    PERSISTENCE_TIME = 0.5    # seconds - continue toward last position before searching
+    SEARCH_SPIN_SPEED = 20    # steering offset for searching
     
     def __init__(self):
         self.state = "SEARCHING"
         self.target_bearing = 0
         self.target_distance = None
         self.last_known_bearing = 0
-        self.search_direction = 1  # 1 = right, -1 = left
-        self.speed_multiplier = 0.5  # Start at 50% speed
+        self.prev_bearing_error = 0     # For D-term
+        self.last_vision_time = 0       # For persistence
+        self.search_direction = 1       # 1 = right, -1 = left
+        self.speed_multiplier = 0.5     # Start at 50% speed
     
     def adjust_speed(self, delta):
         """Adjust speed multiplier by delta (+/- SPEED_STEP)."""
@@ -210,10 +214,19 @@ class FollowerBrain:
                 has_vision = True
                 self.target_bearing = vision_data["bearing"]
                 self.last_known_bearing = self.target_bearing
+                self.last_vision_time = now
                 self.search_direction = 1 if self.target_bearing > 0 else -1
         
         # --- State machine ---
         if not has_vision:
+            # Check for persistence mode - continue toward last known position briefly
+            time_since_vision = now - self.last_vision_time
+            if time_since_vision < self.PERSISTENCE_TIME and self.last_vision_time > 0:
+                # Persistence mode - keep going toward last known bearing
+                self.state = "PERSISTING"
+                steer = self._compute_steering(self.last_known_bearing)
+                return steer, 1560, "PERSISTING"  # Slow crawl
+            
             # Lost target - search
             self.state = "SEARCHING"
             spin_offset = self.SEARCH_SPIN_SPEED * self.search_direction
@@ -234,10 +247,18 @@ class FollowerBrain:
         # --- Handle obstacle evasion while tracking ---
         if obstacle_data:
             action = obstacle_data["action"]
+            front_dist = obstacle_data.get("front_dist")
+            
+            # Proportional evasion - scale offset based on proximity
+            if front_dist and front_dist > 0.1:
+                evade_offset = min(40, int(20 / front_dist))  # Closer = sharper turn
+            else:
+                evade_offset = 20  # Default
+            
             if action == "EVADE_LEFT":
-                steer = max(50, steer - 20)
+                steer = max(50, steer - evade_offset)
             elif action == "EVADE_RIGHT":
-                steer = min(130, steer + 20)
+                steer = min(130, steer + evade_offset)
         
         # --- Compute throttle ---
         if self.target_distance and self.target_distance < self.APPROACH_DISTANCE:
@@ -272,11 +293,19 @@ class FollowerBrain:
         return steer, throttle_pwm, self.state
     
     def _compute_steering(self, bearing):
-        """P-controller with deadband."""
+        """PD-controller with deadband for smooth steering."""
         if abs(bearing) < self.STEER_DEADBAND:
+            self.prev_bearing_error = 0
             return 90
         
-        steer = 90 + int(bearing * self.STEER_KP)
+        # P-term
+        p_term = bearing * self.STEER_KP
+        
+        # D-term (damping to reduce oscillation)
+        d_term = (bearing - self.prev_bearing_error) * self.STEER_KD
+        self.prev_bearing_error = bearing
+        
+        steer = 90 + int(p_term + d_term)
         return max(50, min(130, steer))
     
     def _get_target_distance(self, vision_data, lidar_scan):
@@ -520,7 +549,9 @@ class AutonomousFollower:
         # Arduino connection
         self.arduino = None
         self.last_command_time = 0
+        self.last_command_time = 0
         self.command_rate_limit = 0.05
+        self.last_arduino_rx_time = time.time()
         
     def start(self):
         """Initialize all components and start the control loop."""
@@ -529,13 +560,35 @@ class AutonomousFollower:
         print("=" * 50)
         
         # Connect Arduino
-        try:
-            self.arduino = serial.Serial(self.ARDUINO_PORT, self.ARDUINO_BAUD, timeout=0.1)
-            print(f"✓ Arduino: Connected on {self.ARDUINO_PORT}")
-            time.sleep(2)
-        except Exception as e:
-            print(f"✗ Arduino: Failed to connect - {e}")
-            self.arduino = None
+        # Connect Arduino
+        ports_to_try = [self.ARDUINO_PORT, "/dev/ttyACM1", "/dev/ttyUSB0", "/dev/ttyUSB1", "/dev/ttyACM2"]
+        self.arduino = None
+        
+        for port in ports_to_try:
+            try:
+                print(f"ARDUINO: Attempting to connect on {port}...")
+                ser = serial.Serial(port, self.ARDUINO_BAUD, timeout=0.1)
+                
+                # Verify it's not the Lidar (Lidar usually doesn't respond to ASCII reset command nicely, 
+                # or we can rely on manual user config. For now, just checking if it opens is a start,
+                # but let's try to be smart - the Lidar is usually USB0, Arduino ACMx on Linux usually.
+                # If we open the Lidar port by mistake, it might confuse the Lidar driver.)
+                
+                # Better approach: Just try opening. If it works, we assume it's the right one for now 
+                # unless we have a specific handshake (which we don't really have time to build fully).
+                # However, the Lidar driver catches its own port.
+                
+                self.arduino = ser
+                self.ARDUINO_PORT = port
+                print(f"✓ Arduino: Connected on {port}")
+                time.sleep(2)
+                break
+            except Exception as e:
+                # print(f"  Failed on {port}: {e}")
+                pass
+        
+        if self.arduino is None:
+            print(f"✗ Arduino: Failed to connect. Checked: {ports_to_try}")
         
         # Start vision
         self.vision.start()
@@ -638,9 +691,19 @@ class AutonomousFollower:
                 self.arduino.write(cmd.encode())
                 self.last_command_time = now
                 
-                # Consume any debug lines quietly
+                # Consume debug lines manually
                 while self.arduino.in_waiting > 0:
-                    self.arduino.readline()
+                    self.last_arduino_rx_time = time.time()
+                    line = self.arduino.readline().decode('utf-8', errors='ignore').strip()
+                    if line:
+                        if line.startswith("DEBUG") or line.startswith("INIT"):
+                            print(f"[ARDUINO] {line}")
+                            
+                # Health check 
+                if time.time() - self.last_arduino_rx_time > 3.0:
+                     # Only print every 3s to avoid spam
+                     if time.time() % 3.0 < 0.1: 
+                         print("[ALERT] Arduino connection silent! (Possible IMU hang/Hardware freeze)")
                     
             except Exception as e:
                 print(f"[!] Arduino write error: {e}")

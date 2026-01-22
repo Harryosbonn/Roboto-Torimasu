@@ -24,14 +24,24 @@ class LidarDriver:
         self._connect()
 
     def _connect(self):
-        try:
-            self.ser = serial.Serial(self.port, self.baudrate, timeout=1)
-            self.ser.setDTR(True) # Enable Motor (DTR High often powers MOTO_EN)
-            self.connected = True
-            print(f"Lidar Connected on {self.port}")
-        except Exception as e:
-            print(f"Lidar Connection Failed: {e}. Switching to MOCK mode.")
-            self.connected = False
+        ports_to_try = [self.port, '/dev/ttyUSB0', '/dev/ttyUSB1', '/dev/ttyUSB2']
+        # Remove duplicates while preserving order
+        ports_to_try = list(dict.fromkeys(ports_to_try))
+        
+        for port in ports_to_try:
+            try:
+                print(f"Lidar: Attempting to connect on {port}...")
+                self.ser = serial.Serial(port, self.baudrate, timeout=1)
+                self.ser.setDTR(True) # Enable Motor (DTR High often powers MOTO_EN)
+                self.port = port
+                self.connected = True
+                print(f"✓ Lidar Connected on {self.port}")
+                return
+            except Exception:
+                continue
+        
+        print(f"✗ Lidar Connection Failed on all ports: {ports_to_try}. Switching to MOCK mode.")
+        self.connected = False
 
     def start(self):
         self.running = True

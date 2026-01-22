@@ -26,23 +26,43 @@ class VisionDriver:
         if self.running:
             return
         
-        try:
-            self.cap = cv2.VideoCapture(self.camera_index)
-            # Set resolution
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-            
-            if not self.cap.isOpened():
-                print(f"VISION: Failed to open camera {self.camera_index}")
-                return
+        # Try to find a working camera
+        # Try to find a working camera
+        camera_found = False
+        print("VISION: Starting camera scan (indices 0-20)...")
+        for index in range(21): # Try indices 0-20
+            try:
+                cap = cv2.VideoCapture(index)
+                if cap.isOpened():
+                    # Try to read a frame to confirm it actually works
+                    ret, _ = cap.read()
+                    if ret:
+                        self.cap = cap
+                        self.camera_index = index
+                        # Set resolution
+                        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+                        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+                        print(f"VISION: Success! Using camera index {index}")
+                        camera_found = True
+                        break
+                    else:
+                        print(f"VISION: Index {index} opened but returned no frame (read failed).")
+                        cap.release()
+                else:
+                    # Provide feedback on why it failed if possible (usually standard out/err captures it)
+                    print(f"VISION: Index {index} failed to open (isOpened=False).")
+            except Exception as e:
+                print(f"VISION: Error probing camera {index}: {e}")
+        
+        if not camera_found:
+            print("VISION: CRITICAL - No working camera found!")
+            return
 
-            self.running = True
-            self.thread = threading.Thread(target=self._run_loop)
-            self.thread.daemon = True
-            self.thread.start()
-            print("VISION: Started (Green Object Mode)")
-        except Exception as e:
-            print(f"VISION: Error starting: {e}")
+        self.running = True
+        self.thread = threading.Thread(target=self._run_loop)
+        self.thread.daemon = True
+        self.thread.start()
+        print("VISION: Started (Green Object Mode)")
 
     def stop(self):
         self.running = False

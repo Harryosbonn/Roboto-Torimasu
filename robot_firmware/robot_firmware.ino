@@ -13,9 +13,15 @@ const int MPU_ADDR = 0x68;
 
 // Safety Thresholds
 const int MAX_TILT_ANGLE = 60; // Degrees (Updated from 45)
-const int OBSTACLE_DIST_CM = 15; // Emergency Stop Distance (Updated from 30)
+const int OBSTACLE_STOP_CM = 15;  // Emergency Stop Distance
+const int OBSTACLE_SLOW_CM = 40;  // Start slowing down
 const unsigned long SAFETY_TIMEOUT_MS = 1000; // Stop if no command for 1s
 const unsigned long TIP_DEBOUNCE_MS = 500;    // Persistence required for alarm
+
+// Ultrasonic averaging buffer
+const int US_BUFFER_SIZE = 3;
+long usBuffer[US_BUFFER_SIZE] = {999, 999, 999};
+int usBufferIndex = 0;
 
 // Globals
 Servo steeringServo;
@@ -71,13 +77,24 @@ void setup() {
 
 void loop() {
   // 1. Read Sensors
-  // 1. Read Sensors
   readIMU();
-  long dist = readUltrasonic();
+  long rawDist = readUltrasonic();
+  
+  // Update ultrasonic averaging buffer
+  usBuffer[usBufferIndex] = rawDist;
+  usBufferIndex = (usBufferIndex + 1) % US_BUFFER_SIZE;
+  
+  // Calculate averaged distance
+  long dist = 0;
+  for (int i = 0; i < US_BUFFER_SIZE; i++) {
+    dist += usBuffer[i];
+  }
+  dist /= US_BUFFER_SIZE;
 
   // 2. Safety Checks
   bool isTipped = (abs(pitch) > MAX_TILT_ANGLE || abs(roll) > MAX_TILT_ANGLE);
-  bool isBlocked = (dist > 5 && dist < OBSTACLE_DIST_CM);
+  bool isBlocked = (dist > 5 && dist < OBSTACLE_STOP_CM);
+  bool isSlowing = (dist >= OBSTACLE_STOP_CM && dist < OBSTACLE_SLOW_CM);
   bool isTimedOut = (millis() - lastCommandTime) > SAFETY_TIMEOUT_MS;
 
   if (isTipped) {
@@ -132,10 +149,20 @@ void loop() {
       int targetSteer = currentCmd.steer;
       int targetThrottle = currentCmd.throttle;
 
-      // Obstacle Override
+      // Obstacle Override - Emergency Stop
       if (isBlocked && targetThrottle > 1500) {
          targetThrottle = 1500;
          tone(PIN_BUZZER, 1000, 100);
+      } 
+      // Proportional slowdown in warning zone
+      else if (isSlowing && targetThrottle > 1500) {
+         // Scale throttle down: closer = slower
+         // At OBSTACLE_SLOW_CM: full speed, at OBSTACLE_STOP_CM: zero
+         float slowFactor = (float)(dist - OBSTACLE_STOP_CM) / (float)(OBSTACLE_SLOW_CM - OBSTACLE_STOP_CM);
+         slowFactor = constrain(slowFactor, 0.2, 1.0); // Min 20% speed
+         int reduced = 1500 + (int)((targetThrottle - 1500) * slowFactor);
+         targetThrottle = constrain(reduced, 1500, 2000);
+         tone(PIN_BUZZER, 500, 50); // Soft warning beep
       } else {
          noTone(PIN_BUZZER);
       }

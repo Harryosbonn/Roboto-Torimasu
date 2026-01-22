@@ -58,3 +58,21 @@ The provided code contains a placeholder for Lidar data. You must install the `y
 
 ### Motor Power
 If the Pi reboots when motors start ("Brownout"), your power supply is insufficient. Use a separate battery for motors or a better UBEC for the Pi.
+    
+### Troubleshooting
+#### Camera Not Detected
+- The script now tries indices 0-9. If you see "No working camera found!", verify the USB connection or try `ls /dev/video*`.
+
+#### Arduino Port
+- The script now auto-scans ports (`/dev/ttyACM0`, `ACM1`, `USB0`, etc.). 
+- If it still fails, check `ls /dev/tty*` to see if the device is recognized at all.
+
+#### IMU/Arduino Issues
+- If you see `[ALERT] Arduino connection silent!`, the microcontroller is likely hung.
+- **Action**: Press the physical RESET button on the Arduino or power-cycle the robot.
+
+#### Camera "Device Busy" or Failure
+- If the camera fails even if plugged in, check for background services holding the lock.
+- Run: `sudo systemctl stop robot-follower`
+- Process locks can be checked with `fuser /dev/video*`.
+- The logs may also show `INIT: IMU NOT FOUND!` if the I2C bus is locked up.
