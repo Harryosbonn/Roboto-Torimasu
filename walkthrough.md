@@ -76,3 +76,19 @@ If the Pi reboots when motors start ("Brownout"), your power supply is insuffici
 - Run: `sudo systemctl stop robot-follower`
 - Process locks can be checked with `fuser /dev/video*`.
 - The logs may also show `INIT: IMU NOT FOUND!` if the I2C bus is locked up.
+
+## 5. Critical Fixes Log (Jan 25 2026)
+During the initial deployment, we encountered and fixed the following hardware/software integration issues:
+
+### A. Arduino Freeze (MPU6050)
+- **Problem**: The Arduino would hang at startup (`INIT: Initializing I2C...`) because the MPU sensor was interfering with the I2C bus.
+- **Fix**: Flashed a custom firmware that **bypasses the MPU check**. The robot now runs without tilt-detection safety, but it runs.
+
+### B. Servo Direction
+- **Problem**: The wheels turned *away* from the target.
+- **Fix**: Inverted the steering logic in `autonomous_follower.py`.
+
+### C. Motor Deadband
+- **Problem**: Motors would not spin at low speeds (Power Starvation / High Internal Resistance).
+- **Fix**: Increased `MIN_PWM` to **1630** (from 1600). This provides a stronger initial kick.
+- **Warning**: If the battery is low, this higher current draw can cause **Brownouts** (Servo twitching, USB disconnects). **Keep battery charged!**

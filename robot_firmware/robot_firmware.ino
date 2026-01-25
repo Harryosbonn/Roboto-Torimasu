@@ -4,7 +4,9 @@
 
 // --- KONFIGURATION ---
 #define PIN_SERVO 9
-#define PIN_ESC 10
+#define PIN_ENA 10
+#define PIN_IN1 7
+#define PIN_IN2 8
 #define PIN_BUZZER 11
 #define PIN_TRIG 12
 #define PIN_ECHO 13
@@ -13,11 +15,12 @@
 const int MPU_ADDR = 0x68;
 
 // Safety Thresholds
-const int MAX_TILT_ANGLE = 60; // Degrees (Updated from 45)
+// Safety Thresholds
+const int MAX_TILT_ANGLE = 45; // Degrees (Stricter)
 const int OBSTACLE_STOP_CM = 15;  // Emergency Stop Distance
 const int OBSTACLE_SLOW_CM = 40;  // Start slowing down
-const unsigned long SAFETY_TIMEOUT_MS = 1000; // Stop if no command for 1s
-const unsigned long TIP_DEBOUNCE_MS = 500;    // Persistence required for alarm
+const unsigned long SAFETY_TIMEOUT_MS = 500; // Stop if no command for 0.5s
+const unsigned long TIP_DEBOUNCE_MS = 200;    // Persistence required for alarm
 
 // Ultrasonic averaging buffer
 const int US_BUFFER_SIZE = 3;
@@ -26,7 +29,7 @@ int usBufferIndex = 0;
 
 // Globals
 Servo steeringServo;
-Servo throttleESC; // Most ESCs accept Servo logic
+// L298N uses direct PWM and direction pins instead of Servo logic
 unsigned long lastCommandTime = 0;
 unsigned long firstTippedTime = 0; // For debounce
 float pitch = 0;
@@ -50,18 +53,22 @@ void setup() {
 
   // Init Motors
   steeringServo.attach(PIN_SERVO);
-  throttleESC.attach(PIN_ESC); 
+  pinMode(PIN_ENA, OUTPUT);
+  pinMode(PIN_IN1, OUTPUT);
+  pinMode(PIN_IN2, OUTPUT);
   
-  // Arm ESC (Send neutral for a few seconds)
-  throttleESC.writeMicroseconds(1500); 
-  steeringServo.write(90);
-  delay(2000);
+  // Init Motor Driver (L298N)
+  Serial.println("INIT: Motor Driver Ready");
+  stopMotors();
+  delay(500);
 
+  // Init MPU6050
   // Init MPU6050
   Serial.println("INIT: Initializing I2C...");
   Wire.begin();
+  Wire.setWireTimeout(3000, true); // 3ms timeout, reset on timeout
   Wire.beginTransmission(MPU_ADDR);
-  Wire.write(0x3B); // Try to read instead of write to wake
+  Wire.write(0x3B); 
   if (Wire.endTransmission() == 0) {
     Serial.println("INIT: IMU Found. Waking up...");
     Wire.beginTransmission(MPU_ADDR);
@@ -71,7 +78,6 @@ void setup() {
   } else {
     Serial.println("INIT: IMU NOT FOUND! Bypassing...");
   }
-  // Serial.println("INIT: IMU DISABLED (BYPASS)");
   
   // Enable hardware watchdog (2 second timeout)
   // If loop() hangs for >2s, Arduino auto-resets
@@ -111,12 +117,12 @@ void loop() {
     if (millis() - firstTippedTime > TIP_DEBOUNCE_MS) {
       alarmActive = true;
       stopMotors();
-      digitalWrite(PIN_BUZZER, HIGH); // Constant tone
+      tone(PIN_BUZZER, 2000); // 2kHz tone for alarm
     }
   } else {
     firstTippedTime = 0;
     alarmActive = false;
-    digitalWrite(PIN_BUZZER, LOW);
+    noTone(PIN_BUZZER);
   }
 
   // 3. Process Serial Commands
@@ -149,7 +155,11 @@ void loop() {
          lastSteer = 90; 
          lastThrottle = 1500;
       }
-      digitalWrite(PIN_BUZZER, alarmActive ? HIGH : LOW);
+      if (alarmActive) {
+        tone(PIN_BUZZER, 2000);
+      } else {
+        noTone(PIN_BUZZER);
+      }
   } else {
       lastAlarmState = false;
       
@@ -182,7 +192,25 @@ void loop() {
       }
 
       if (targetThrottle != lastThrottle) {
-          throttleESC.writeMicroseconds(targetThrottle);
+          // Send throttle to L298N
+          if (targetThrottle == 1500) {
+              // Neutral / Stop
+              digitalWrite(PIN_IN1, LOW);
+              digitalWrite(PIN_IN2, LOW);
+              analogWrite(PIN_ENA, 0);
+          } else if (targetThrottle > 1500) {
+              // Forward
+              int speed = map(targetThrottle, 1500, 2000, 0, 255);
+              digitalWrite(PIN_IN1, HIGH);
+              digitalWrite(PIN_IN2, LOW);
+              analogWrite(PIN_ENA, speed);
+          } else {
+              // Backward
+              int speed = map(targetThrottle, 1500, 1000, 0, 255);
+              digitalWrite(PIN_IN1, LOW);
+              digitalWrite(PIN_IN2, HIGH);
+              analogWrite(PIN_ENA, speed);
+          }
           lastThrottle = targetThrottle;
       }
   }
@@ -206,7 +234,9 @@ void loop() {
 
 void stopMotors() {
   steeringServo.write(90);
-  throttleESC.writeMicroseconds(1500);
+  digitalWrite(PIN_IN1, LOW);
+  digitalWrite(PIN_IN2, LOW);
+  analogWrite(PIN_ENA, 0);
 }
 
 void readIMU() {

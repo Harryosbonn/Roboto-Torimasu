@@ -10,7 +10,7 @@
     2.  **To UBEC** (Voltage Regulator) -> Powers the Raspberry Pi 5.
 
 ### 2. Servo & Motor Power
-- **DC Motor**: Connect to the output leads of the **320A ESC**.
+- **DC Motor**: Connect to the **Output A** (or B) terminals of the **L298N Motor Driver**.
 - **Servo (20kg)**:
     -   **Signal (Orange/White)**: To Arduino **Pin 9**.
     -   **Power (+/-)**: **DO NOT** connect to Arduino 5V. The Servo draws too much current.
@@ -29,7 +29,9 @@
 | Component | Pin Name | Arduino Pin | Notes |
 | :--- | :--- | :--- | :--- |
 | **Steering Servo** | Signal (PWM) | **D9** |  |
-| **ESC (Throttle)** | Signal (PWM) | **D10** |  |
+| **L298N ENA**    | PWM Speed   | **D10** | Reuses old ESC pin |
+| **L298N IN1**    | Direction 1 | **D7**  | New |
+| **L298N IN2**    | Direction 2 | **D8**  | New |
 | **IMU (MPU6050)** | SDA | **D20** (SDA) |  |
 | | SCL | **D21** (SCL) |  |
 | | VCC | 5V |  |
@@ -64,9 +66,10 @@ graph TD
     end
 
     subgraph "Drive System"
-        SPLIT ===|7.4V Thick Wires| ESC[320A ESC Controller]
-        ESC ---|Motor Leads| M[DC Brushed Motor]
-        ESC ---|Signal 3-Wires| MEGA_D10[Arduino Mega Pin D10]
+        SPLIT ===|7.4V Thick Wires| L298N[L298N Motor Driver]
+        L298N ---|Output A/B| M[DC Brushed Motor]
+        L298N ---|IN1/IN2| MEGA_DIR[Arduino Mega D7, D8]
+        L298N ---|ENA| MEGA_D10[Arduino Mega Pin D10]
     end
 
     subgraph "Logic & Steering Power"
@@ -79,13 +82,13 @@ graph TD
     end
 
     style BAT fill:#f96,stroke:#333,stroke-width:2px
-    style ESC fill:#69f,stroke:#333,stroke-width:2px
+    style L298N fill:#69f,stroke:#333,stroke-width:2px
     style UBEC fill:#6f6,stroke:#333,stroke-width:2px
 ```
 
 ### Critical Actuator Checks:
-1.  **ESC Switch**: Ensure the physical slide switch on the ESC is **ON**.
-2.  **ESC Arming**: You must hear beeps from the ESC when power is applied.
+1.  **L298N Power**: Ensure 7.4V (VCC) and GND are connected to the battery.
+2.  **Jumpers**: Ensure the ENA jumper is REMOVED if using Pin 10 for PWM, or keep it if always full speed (not recommended).
 3.  **Servo Power**: The servo red/black wires should go to the 5V UBEC output, not the Arduino's 5V pin.
 4.  **Signal Ground**: Ensure the ESC/Servo share a common ground with the Arduino.
 
@@ -94,21 +97,21 @@ graph TD
 ## Diagram Overview
 
 ```mermaid
-graph TD
     Batt[2S LiPo Battery] -->|7.4V| Split{Power Splitter}
-    Split -->|7.4V| ESC[Motor ESC]
+    Split -->|7.4V| L298N[L298N Driver]
     Split -->|7.4V| UBEC[YSIDO UBEC 6A]
     
-    ESC -->|Power| Motor[DC Motor]
-    ESC -.->|5V BEC?| Servo[Steering Servo]
+    L298N -->|Output A/B| Motor[DC Motor]
     
     UBEC -->|5V Regulated| Pi[Raspberry Pi 5]
+    UBEC -->|5V Regulated| Servo[Steering Servo]
     
     Pi ===|USB Cable| Mega[Arduino Mega]
     Pi ===|USB| Lidar[YDLiDAR]
     
     Mega -->|PWM D9| Servo
-    Mega -->|PWM D10| ESC
+    Mega -->|PWM D10| ENA[L298N ENA]
+    Mega -->|Digital D7/D8| IN[L298N IN1/IN2]
     Mega -->|I2C| IMU[MPU6050]
     Mega -->|Digital| Buzzer
     Mega -->|Digital| Sonic[Ultrasonic Sensor]

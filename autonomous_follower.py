@@ -153,13 +153,12 @@ class FollowerBrain:
     - EMERGENCY: Obstacle too close, emergency stop
     """
     
-    # Distance thresholds (meters)
-    ARRIVED_DISTANCE = 0.3   # Stop when very close (reduced from 0.5)
-    APPROACH_DISTANCE = 1.2  # Start slowing
+    MAX_SPEED = 100      # Full power!
+    MIN_SPEED = 30       # Minimum moving speed
     
-    MAX_SPEED = 70       # Sane base speed
-    APPROACH_SPEED = 40  # Slower approach
-    MIN_SPEED = 30       # Minimum moving
+    # Distance thresholds (meters)
+    ARRIVED_DISTANCE = 0.4   # Stop distance
+    SLOW_START_DISTANCE = 2.0 # Distance to start slowing down
     
     # Speed multiplier range (adjusted via GUI)
     SPEED_MIN = 0.3
@@ -184,7 +183,7 @@ class FollowerBrain:
         self.prev_bearing_error = 0     # For D-term
         self.last_vision_time = 0       # For persistence
         self.search_direction = 1       # 1 = right, -1 = left
-        self.speed_multiplier = 0.5     # Start at 50% speed
+        self.speed_multiplier = 0.7     # Start at 70% speed (increased from 50%)
     
     def adjust_speed(self, delta):
         """Adjust speed multiplier by delta (+/- SPEED_STEP)."""
@@ -192,7 +191,7 @@ class FollowerBrain:
                                      min(self.SPEED_MAX, 
                                          self.speed_multiplier + delta))
         
-    def compute(self, vision_data, obstacle_data, lidar_scan):
+    def compute(self, vision_data, obstacle_data, lidar_scan, ultrasonic_dist=999):
         """
         Compute motor commands based on vision and obstacle data.
         
@@ -202,9 +201,15 @@ class FollowerBrain:
         now = time.time()
         
         # --- Check for emergency stop ---
-        if obstacle_data and obstacle_data["action"] == "STOP":
-            self.state = "EMERGENCY"
-            return 90, 1500, "EMERGENCY"
+        if ultrasonic_dist < 30:  # Reduced from 50 to be less restrictive
+             if self.state != "BLOCKED":
+                 print(f"[BRAIN] BLOCKED! Ultrasonic dist: {ultrasonic_dist}cm")
+             self.state = "BLOCKED"
+             return 90, 1500, "BLOCKED"
+
+        # if obstacle_data and obstacle_data["action"] == "STOP":
+        #     self.state = "EMERGENCY"
+        #     return 90, 1500, "EMERGENCY"
         
         # --- Check vision status ---
         has_vision = False
@@ -225,7 +230,7 @@ class FollowerBrain:
                 # Persistence mode - keep going toward last known bearing
                 self.state = "PERSISTING"
                 steer = self._compute_steering(self.last_known_bearing)
-                return steer, 1560, "PERSISTING"  # Slow crawl
+                return steer, 1580, "PERSISTING"  # Slow crawl (standard forward)
             
             # Lost target - search
             self.state = "SEARCHING"
@@ -244,46 +249,79 @@ class FollowerBrain:
         # --- Compute steering ---
         steer = self._compute_steering(self.target_bearing)
         
-        # --- Handle obstacle evasion while tracking ---
-        if obstacle_data:
-            action = obstacle_data["action"]
-            front_dist = obstacle_data.get("front_dist")
+        # --- Check for evasion (Priority over tracking) ---
+        # if obstacle_data and obstacle_data["action"] in ["EVADE_LEFT", "EVADE_RIGHT"]:
+        #     self.state = "EVADING"
+        #     action = obstacle_data["action"]
+        #     front_dist = obstacle_data.get("front_dist")
             
-            # Proportional evasion - scale offset based on proximity
-            if front_dist and front_dist > 0.1:
-                evade_offset = min(40, int(20 / front_dist))  # Closer = sharper turn
-            else:
-                evade_offset = 20  # Default
+        #     # Base steering on last known target or straight ahead if completely lost
+        #     base_bearing = self.last_known_bearing if self.last_known_bearing else 0
+        #     steer = self._compute_steering(base_bearing)
             
-            if action == "EVADE_LEFT":
-                steer = max(50, steer - evade_offset)
-            elif action == "EVADE_RIGHT":
-                steer = min(130, steer + evade_offset)
+        #     # Calculate evasion offset
+        #     if front_dist and front_dist > 0.1:
+        #         evade_offset = min(40, int(20 / front_dist))
+        #     else:
+        #         evade_offset = 20
+                
+        #     # Apply offset
+        #     if action == "EVADE_LEFT":
+        #         steer = max(50, steer - evade_offset)
+        #     elif action == "EVADE_RIGHT":
+        #         steer = min(130, steer + evade_offset)
+                
+        #     # Force slow movement
+        #     # Use fixed safe crawl PWM for evasion (1600 provides slow movement vs 1580 start)
+        #     evade_pwm = 1600 
+            
+        #     return steer, evade_pwm, "EVADING"
         
-        # --- Compute throttle ---
-        if self.target_distance and self.target_distance < self.APPROACH_DISTANCE:
-            self.state = "APPROACHING"
-            speed = self.APPROACH_SPEED
+        # --- Compute throttle (Proportional Control) ---
+        if self.target_distance:
+            if self.target_distance < self.ARRIVED_DISTANCE:
+                self.state = "ARRIVED"
+                return 90, 1500, "ARRIVED"
+                
+            # Linearly scale speed based on distance
+            # Distance: ARRIVED_DISTANCE -> SLOW_START_DISTANCE
+            # Speed:    MIN_SPEED        -> MAX_SPEED
+            
+            dist_range = self.SLOW_START_DISTANCE - self.ARRIVED_DISTANCE
+            dist_fraction = (self.target_distance - self.ARRIVED_DISTANCE) / dist_range
+            dist_fraction = max(0.0, min(1.0, dist_fraction)) # Clamp 0-1
+            
+            # Interpolate
+            speed_range = self.MAX_SPEED - self.MIN_SPEED
+            speed = self.MIN_SPEED + (dist_fraction * speed_range)
+            
+            if dist_fraction < 1.0:
+                 self.state = "APPROACHING"
+            else:
+                 self.state = "TRACKING"
         else:
+            # No distance info (only bearing?), assume standard tracking speed or slow?
+            # If we are here, we usually have target_distance because of line 237 logic
+            # But just in case:
             self.state = "TRACKING"
             speed = self.MAX_SPEED
         
         # Apply obstacle slowdown
-        if obstacle_data and obstacle_data["action"] == "SLOW":
-            speed = min(speed, self.MIN_SPEED)
+        # if obstacle_data and obstacle_data["action"] == "SLOW":
+        #     speed = min(speed, self.MIN_SPEED)
         
         # Apply speed multiplier (from GUI control)
         # speed is 0-100 based on MAX_SPEED setting (e.g. 70)
         target_speed = speed * self.speed_multiplier
         
-        # Non-linear mapping:
-        # If speed > 0, we must output at least MIN_PWM to move.
-        MIN_PWM = 1560  # Lowered from 1620 to allow slower crawl
-        MAX_PWM = 1750  # Lowered from 1950 to cap top speed
+        # Non-linear mapping (Inverted):
+        # Neutral = 1500
+        # Forward = < 1500 (1370 to 1100)
+        
+        MIN_PWM = 1640  # Starting torque (Increased for L298N)
+        MAX_PWM = 1800  # Max power (Standard)
         
         if target_speed > 0:
-            # Normalize speed (0-100) to PWM range (1620-1950)
-            # We assume '100' is the theoretical max input speed
             pct = min(1.0, target_speed / 100.0) 
             pwm_range = MAX_PWM - MIN_PWM
             throttle_pwm = MIN_PWM + int(pct * pwm_range)
@@ -305,7 +343,8 @@ class FollowerBrain:
         d_term = (bearing - self.prev_bearing_error) * self.STEER_KD
         self.prev_bearing_error = bearing
         
-        steer = 90 + int(p_term + d_term)
+        # INVERTED: User reported opposite movement
+        steer = 90 - int(p_term + d_term)
         return max(50, min(130, steer))
     
     def _get_target_distance(self, vision_data, lidar_scan):
@@ -550,8 +589,10 @@ class AutonomousFollower:
         self.arduino = None
         self.last_command_time = 0
         self.last_command_time = 0
+        self.last_command_time = 0
         self.command_rate_limit = 0.05
         self.last_arduino_rx_time = time.time()
+        self.ultrasonic_dist = 999  # Initialize with safe distance
         
     def start(self):
         """Initialize all components and start the control loop."""
@@ -561,7 +602,7 @@ class AutonomousFollower:
         
         # Connect Arduino
         # Connect Arduino
-        ports_to_try = [self.ARDUINO_PORT, "/dev/ttyACM1", "/dev/ttyUSB0", "/dev/ttyUSB1", "/dev/ttyACM2"]
+        ports_to_try = ["/dev/ttyACM2", "/dev/ttyACM1", "/dev/ttyACM0", "/dev/ttyUSB0", "/dev/ttyUSB1"]
         self.arduino = None
         
         for port in ports_to_try:
@@ -637,8 +678,13 @@ class AutonomousFollower:
                 
                 if not paused:
                     steer, throttle, state = self.brain.compute(
-                        vision_data, obstacle_data, lidar_scan
+                        vision_data, obstacle_data, lidar_scan, self.ultrasonic_dist
                     )
+                    
+                    # Print brain status occasionally
+                    if int(loop_start * 2) % 2 == 0:
+                        print(f"[BRAIN] State: {state}, Throttle: {throttle}, US Dist: {self.ultrasonic_dist}cm")
+                        
                     self._send_command(steer, throttle)
                 else:
                     self._send_command(90, 1500)
@@ -691,6 +737,10 @@ class AutonomousFollower:
                 self.arduino.write(cmd.encode())
                 self.last_command_time = now
                 
+                # Debug: show commands being sent
+                if int(now * 2) % 2 == 0:  # Print every ~0.5s
+                    print(f"[CMD] steer={steer}, throttle={throttle}")
+                
                 # Consume debug lines manually
                 while self.arduino.in_waiting > 0:
                     self.last_arduino_rx_time = time.time()
@@ -698,6 +748,16 @@ class AutonomousFollower:
                     if line:
                         if line.startswith("DEBUG") or line.startswith("INIT"):
                             print(f"[ARDUINO] {line}")
+                            # Parse ultrasonic distance: DEBUG | ... |Dist:54| ...
+                            if "Dist:" in line:
+                                try:
+                                    parts = line.split("|")
+                                    for p in parts:
+                                        if p.startswith("Dist:"):
+                                            self.ultrasonic_dist = int(p.split(":")[1])
+                                            break
+                                except:
+                                    pass
                             
                 # Health check 
                 if time.time() - self.last_arduino_rx_time > 3.0:
